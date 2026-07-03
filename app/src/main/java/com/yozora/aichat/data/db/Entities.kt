@@ -38,7 +38,9 @@ data class ChatSessionEntity(
     val preview: String,
     val updatedAt: String,
     val sortOrder: Int,
-    val draft: String = ""
+    val draft: String = "",
+    val isFavorite: Boolean = false,
+    val pinnedAtMillis: Long? = null
 )
 
 @Entity(

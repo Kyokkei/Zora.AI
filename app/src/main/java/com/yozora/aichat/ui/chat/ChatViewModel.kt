@@ -201,13 +201,18 @@ sealed interface AppUpdateState {
     data object Checking : AppUpdateState
     data class UpToDate(
         val currentVersion: String,
+        val currentVersionCode: Long,
         val checkedAtMillis: Long
     ) : AppUpdateState
     data class UpdateAvailable(
         val currentVersion: String,
+        val currentVersionCode: Long,
         val latestVersion: String,
+        val latestVersionCode: Long?,
         val downloadUrl: String,
-        val assetName: String
+        val assetName: String,
+        val sha256: String? = null,
+        val sizeBytes: Long? = null
     ) : AppUpdateState
     data class Downloading(
         val latestVersion: String,
@@ -280,6 +285,8 @@ data class ChatSession(
     val preview: String = "No messages yet",
     val updatedAt: String = "Now",
     val draft: String = "",
+    val isFavorite: Boolean = false,
+    val pinnedAtMillis: Long? = null,
     val messages: List<ChatMessage> = emptyList()
 )
 
@@ -350,6 +357,38 @@ data class TtsPreviewState(
         get() = text.length
 }
 
+data class ImportPreviewState(
+    val session: ChatSession,
+    val sourceKind: String,
+    val duplicateWarning: String? = null
+) {
+    val messageCount: Int
+        get() = session.messages.count { !it.isImageLoading }
+}
+
+data class CreateDraftState(
+    val name: String = "",
+    val tagline: String = "",
+    val selectedTags: List<String> = emptyList(),
+    val selectedGender: String? = null,
+    val prompt: String = "",
+    val greeting: String = "",
+    val storyLore: String = "",
+    val avatarUri: Uri? = null,
+    val background: ChatBackground = ChatBackground.DarkMode
+) {
+    val hasContent: Boolean
+        get() = name.isNotBlank() ||
+            tagline.isNotBlank() ||
+            selectedTags.isNotEmpty() ||
+            selectedGender != null ||
+            prompt.isNotBlank() ||
+            greeting.isNotBlank() ||
+            storyLore.isNotBlank() ||
+            avatarUri != null ||
+            background !is ChatBackground.DarkMode
+}
+
 private data class PendingTtsRequest(
     val messageId: String,
     val sessionId: String,
@@ -404,6 +443,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val userProfileGenderKey = stringPreferencesKey("user_profile_gender_v1")
     private val userProfileAvatarUriKey = stringPreferencesKey("user_profile_avatar_uri_v1")
     private val exportDefaultFolderUriKey = stringPreferencesKey("export_default_folder_uri")
+    private val createDraftStateKey = stringPreferencesKey("create_character_draft_v1")
     private val languageCodeKey = stringPreferencesKey("language_code")
     private val nsfwModeEnabledKey = booleanPreferencesKey("nsfw_mode_enabled_v1")
     private val summarizerSeparateKeyKey = booleanPreferencesKey("summarizer_use_separate_key")
@@ -484,6 +524,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         private set
 
     var ttsPlaybackMessageId by mutableStateOf<String?>(null)
+        private set
+
+    var importPreviewState by mutableStateOf<ImportPreviewState?>(null)
+        private set
+
+    var createDraftState by mutableStateOf(CreateDraftState())
         private set
 
     var chatError by mutableStateOf<String?>(null)
@@ -705,6 +751,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 roleplayUiModeEnabled = preferences[roleplayUiModeEnabledKey] ?: false
                 roleplayLightModeEnabled = preferences[roleplayLightModeKey] ?: false
                 languageCode = preferences[languageCodeKey] ?: "en"
+                createDraftState = preferences[createDraftStateKey]?.toCreateDraftState() ?: CreateDraftState()
             }
         }
         viewModelScope.launch {
@@ -2123,6 +2170,29 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         persistChatState()
     }
 
+    fun updateCreateDraft(state: CreateDraftState) {
+        if (state == createDraftState) return
+        createDraftState = state
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsDataStore.edit { preferences ->
+                if (state.hasContent) {
+                    preferences[createDraftStateKey] = state.toJson().toString()
+                } else {
+                    preferences.remove(createDraftStateKey)
+                }
+            }
+        }
+    }
+
+    fun clearCreateDraft() {
+        createDraftState = CreateDraftState()
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsDataStore.edit { preferences ->
+                preferences.remove(createDraftStateKey)
+            }
+        }
+    }
+
     fun createProject(): String {
         val project = ProjectUiState()
         projects.add(0, project)
@@ -2221,6 +2291,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             archivedMessageIds = emptySet(),
             preview = "No messages yet",
             updatedAt = currentTime(),
+            isFavorite = false,
+            pinnedAtMillis = null,
             messages = emptyList()
         )
         sessions.add(0, copiedSession)
@@ -2241,13 +2313,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             title = sourceTitle.let { title ->
                 if (title.endsWith(" copy", ignoreCase = true)) title else "$title copy"
             },
-            updatedAt = currentTime()
+            updatedAt = currentTime(),
+            isFavorite = false,
+            pinnedAtMillis = null
         )
         sessions.add(0, clone)
         activeSessionId = clone.id
         draft = ""
         attachedImageUris = emptyList()
         sessionDrawerVisible = false
+        persistChatState()
+    }
+
+    fun toggleSessionFavorite(sessionId: String) {
+        val index = sessions.indexOfFirst { it.id == sessionId }
+        if (index < 0) return
+        sessions[index] = sessions[index].copy(
+            isFavorite = !sessions[index].isFavorite,
+            updatedAt = currentTime()
+        )
+        persistChatState()
+    }
+
+    fun toggleSessionPinned(sessionId: String) {
+        val index = sessions.indexOfFirst { it.id == sessionId }
+        if (index < 0) return
+        sessions[index] = sessions[index].copy(
+            pinnedAtMillis = if (sessions[index].pinnedAtMillis == null) System.currentTimeMillis() else null,
+            updatedAt = currentTime()
+        )
         persistChatState()
     }
 
@@ -2336,6 +2430,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun importSessionFromUri(source: Uri) {
+        prepareSessionImportPreview(source)
+    }
+
+    fun prepareSessionImportPreview(source: Uri) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -2347,18 +2445,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     val input = context.contentResolver.openInputStream(source)
                         ?: error("Could not open import file.")
                     val raw = input.bufferedReader().use { reader -> reader.readText() }
-                    parseAndLoadImportedSession(context, raw).freshImportCopy()
+                    buildImportPreview(parseAndLoadImportedSession(context, raw), "Session")
                 }
             }
             result
-                .onSuccess { importedSession ->
-                    sessions.add(0, importedSession)
-                    activeSessionId = importedSession.id
-                    draft = ""
-                    attachedImageUris = emptyList()
-                    sessionDrawerVisible = false
+                .onSuccess { preview ->
+                    importPreviewState = preview
                     chatError = null
-                    persistChatState()
                 }
                 .onFailure { throwable ->
                     chatError = throwable.message?.take(160) ?: "Import failed."
@@ -2539,29 +2632,73 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun importConfigFromUri(context: android.content.Context, sourceUri: Uri) {
+        prepareConfigImportPreview(sourceUri)
+    }
+
+    fun prepareConfigImportPreview(sourceUri: Uri) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
+                    val context = getApplication<Application>()
                     val input = context.contentResolver.openInputStream(sourceUri)
                         ?: error("Could not open import file.")
                     val raw = input.bufferedReader().use { it.readText() }
-                    parseAndLoadImportedSession(context, raw).freshImportCopy()
+                    buildImportPreview(parseAndLoadImportedSession(context, raw), "Config")
                 }
             }
             result
-                .onSuccess { importedSession ->
-                    sessions.add(0, importedSession)
-                    activeSessionId = importedSession.id
-                    draft = ""
-                    attachedImageUris = emptyList()
-                    sessionDrawerVisible = false
+                .onSuccess { preview ->
+                    importPreviewState = preview
                     chatError = null
-                    persistChatState()
                 }
                 .onFailure { throwable ->
                     chatError = throwable.message?.take(160) ?: "Import config failed."
                 }
         }
+    }
+
+    fun dismissImportPreview() {
+        importPreviewState = null
+    }
+
+    fun confirmImportPreview(asCopy: Boolean) {
+        val preview = importPreviewState ?: return
+        val importedSession = preview.session.freshImportCopy().let { session ->
+            if (asCopy) {
+                val baseTitle = session.title.ifBlank { session.persona.displayName.ifBlank { "Imported character" } }
+                session.copy(
+                    title = if (baseTitle.endsWith(" copy", ignoreCase = true)) baseTitle else "$baseTitle copy",
+                    updatedAt = currentTime()
+                )
+            } else {
+                session
+            }
+        }
+        sessions.add(0, importedSession)
+        activeSessionId = importedSession.id
+        draft = ""
+        attachedImageUris = emptyList()
+        sessionDrawerVisible = false
+        importPreviewState = null
+        chatError = null
+        persistChatState()
+    }
+
+    private fun buildImportPreview(session: ChatSession, sourceKind: String): ImportPreviewState {
+        val importedName = session.persona.displayName.trim()
+        val duplicate = sessions.firstOrNull { existing ->
+            existing.id == session.id ||
+                (importedName.isNotBlank() && existing.persona.displayName.equals(importedName, ignoreCase = true))
+        }
+        val duplicateWarning = duplicate?.let { existing ->
+            val name = existing.persona.displayName.ifBlank { existing.title.ifBlank { "an existing character" } }
+            "Looks similar to $name already in your library."
+        }
+        return ImportPreviewState(
+            session = session,
+            sourceKind = sourceKind,
+            duplicateWarning = duplicateWarning
+        )
     }
 
     private suspend fun parseAndLoadImportedSession(context: android.content.Context, raw: String): ChatSession {
@@ -3340,7 +3477,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             is AppUpdateState.UpdateAvailable -> state
             is AppUpdateState.PermissionNeeded -> AppUpdateState.UpdateAvailable(
                 currentVersion = getApplication<Application>().currentPackageVersionName(),
+                currentVersionCode = getApplication<Application>().currentPackageVersionCode(),
                 latestVersion = state.latestVersion,
+                latestVersionCode = null,
                 downloadUrl = state.downloadUrl,
                 assetName = "APK"
             )
@@ -4706,6 +4845,7 @@ private const val MAX_STORY_LORE_CHARS = 16_000
 private const val MAX_LEVEL_XP = 1_500
 private const val XP_PER_TEXT_MESSAGE = 10
 private const val GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/Z0ra-AI/Zora.AI/releases/latest"
+private const val UPDATE_METADATA_ASSET_NAME = "zora-update.json"
 private const val UPDATE_CACHE_DIR = "updates"
 
 private enum class InstallLaunchResult {
@@ -4729,17 +4869,36 @@ private fun resolveLatestUpdateState(context: Context): AppUpdateState {
     }
     val apkAsset = release.findBestZoraApkAsset()
         ?: throw IOException("Latest release has no APK asset.")
+    val metadata = release.findUpdateMetadataAsset()
+        ?.optString("browser_download_url")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { url -> runCatching { fetchJsonUrl(url) }.getOrNull() }
     val currentVersion = context.currentPackageVersionName()
-    return if (compareVersionNames(latestVersion, currentVersion) > 0) {
+    val currentVersionCode = context.currentPackageVersionCode()
+    val latestVersionCode = metadata?.optLong("versionCode")?.takeIf { it > 0L }
+    val metadataVersionName = metadata?.optString("versionName")?.removePrefix("v")?.trim().orEmpty()
+    val displayLatestVersion = metadataVersionName.ifBlank { latestVersion }
+    val metadataApkName = metadata?.optString("apkAssetName").orEmpty()
+    val metadataDownloadUrl = metadata?.optString("downloadUrl").orEmpty()
+    val downloadUrl = metadataDownloadUrl.ifBlank { apkAsset.getString("browser_download_url") }
+    val assetName = metadataApkName.ifBlank { apkAsset.optString("name").ifBlank { "APK" } }
+    val hasNewerVersionCode = latestVersionCode != null && latestVersionCode > currentVersionCode
+    val hasNewerVersionName = compareVersionNames(displayLatestVersion, currentVersion) > 0
+    return if (hasNewerVersionCode || (latestVersionCode == null && hasNewerVersionName)) {
         AppUpdateState.UpdateAvailable(
             currentVersion = currentVersion,
-            latestVersion = latestVersion,
-            downloadUrl = apkAsset.getString("browser_download_url"),
-            assetName = apkAsset.optString("name").ifBlank { "APK" }
+            currentVersionCode = currentVersionCode,
+            latestVersion = displayLatestVersion,
+            latestVersionCode = latestVersionCode,
+            downloadUrl = downloadUrl,
+            assetName = assetName,
+            sha256 = metadata?.optString("sha256")?.takeIf { it.isNotBlank() },
+            sizeBytes = metadata?.optLong("sizeBytes")?.takeIf { it > 0L }
         )
     } else {
         AppUpdateState.UpToDate(
             currentVersion = currentVersion,
+            currentVersionCode = currentVersionCode,
             checkedAtMillis = System.currentTimeMillis()
         )
     }
@@ -4764,6 +4923,35 @@ private fun fetchLatestGitHubRelease(): JSONObject {
     }
 }
 
+private fun fetchJsonUrl(url: String): JSONObject {
+    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 15_000
+        readTimeout = 20_000
+        setRequestProperty("Accept", "application/json, application/vnd.github.raw")
+        setRequestProperty("User-Agent", "Zora.AI-Android-Updater")
+    }
+    return try {
+        if (connection.responseCode !in 200..299) {
+            throw IOException("Metadata check failed: ${connection.responseCode}")
+        }
+        JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun JSONObject.findUpdateMetadataAsset(): JSONObject? {
+    val assets = optJSONArray("assets") ?: return null
+    for (index in 0 until assets.length()) {
+        val asset = assets.optJSONObject(index) ?: continue
+        if (asset.optString("name").equals(UPDATE_METADATA_ASSET_NAME, ignoreCase = true)) {
+            return asset
+        }
+    }
+    return null
+}
+
 private fun JSONObject.findBestZoraApkAsset(): JSONObject? {
     val assets = optJSONArray("assets") ?: return null
     val apkAssets = buildList {
@@ -4783,6 +4971,16 @@ private fun JSONObject.findBestZoraApkAsset(): JSONObject? {
 
 private fun Context.currentPackageVersionName(): String {
     return packageManager.getPackageInfo(packageName, 0).versionName ?: "0"
+}
+
+private fun Context.currentPackageVersionCode(): Long {
+    val info = packageManager.getPackageInfo(packageName, 0)
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        info.longVersionCode
+    } else {
+        @Suppress("DEPRECATION")
+        info.versionCode.toLong()
+    }
 }
 
 private fun compareVersionNames(left: String, right: String): Int {
@@ -5102,6 +5300,8 @@ private fun ChatSession.freshImportCopy(): ChatSession {
         archivedMessageIds = archivedMessageIds.mapNotNullTo(linkedSetOf()) { messageIdMap[it] },
         preview = previewForRestored(importedMessages),
         updatedAt = currentTime(),
+        isFavorite = false,
+        pinnedAtMillis = null,
         messages = importedMessages
     )
 }
@@ -5188,6 +5388,8 @@ private fun ChatSession.toJson(): JSONObject {
         .put("preview", preview)
         .put("updatedAt", updatedAt)
         .put("draft", draft)
+        .put("isFavorite", isFavorite)
+        .put("pinnedAtMillis", pinnedAtMillis ?: JSONObject.NULL)
         .put(
             "messages",
             JSONArray().apply {
@@ -5260,6 +5462,8 @@ private fun JSONObject.toChatSession(): ChatSession {
         preview = optString("preview").ifBlank { previewForRestored(restoredMessages) },
         updatedAt = optString("updatedAt").ifBlank { "Now" },
         draft = optString("draft"),
+        isFavorite = optBoolean("isFavorite", false),
+        pinnedAtMillis = optNullableLong("pinnedAtMillis"),
         messages = restoredMessages
     )
 }
@@ -5388,6 +5592,42 @@ private fun JSONObject.toChatBackground(): ChatBackground {
     }
 }
 
+private fun CreateDraftState.toJson(): JSONObject {
+    return JSONObject()
+        .put("name", name)
+        .put("tagline", tagline)
+        .put("selectedTags", JSONArray().apply { selectedTags.forEach(::put) })
+        .put("selectedGender", selectedGender ?: JSONObject.NULL)
+        .put("prompt", prompt)
+        .put("greeting", greeting)
+        .put("storyLore", storyLore)
+        .put("avatarUri", avatarUri?.toString() ?: JSONObject.NULL)
+        .put("background", background.toJson())
+}
+
+private fun String.toCreateDraftState(): CreateDraftState? {
+    return runCatching {
+        val root = JSONObject(this)
+        val tagsJson = root.optJSONArray("selectedTags") ?: JSONArray()
+        val tags = buildList {
+            for (index in 0 until tagsJson.length()) {
+                tagsJson.optString(index).takeIf { it.isNotBlank() }?.let(::add)
+            }
+        }
+        CreateDraftState(
+            name = root.optString("name"),
+            tagline = root.optString("tagline"),
+            selectedTags = tags,
+            selectedGender = root.optNullableString("selectedGender"),
+            prompt = root.optString("prompt"),
+            greeting = root.optString("greeting"),
+            storyLore = root.optString("storyLore"),
+            avatarUri = root.optNullableString("avatarUri")?.let(Uri::parse),
+            background = root.optJSONObject("background")?.toChatBackground() ?: ChatBackground.DarkMode
+        )
+    }.getOrNull()
+}
+
 private fun ChatMessage.toJson(): JSONObject {
     return JSONObject()
         .put("id", id)
@@ -5432,6 +5672,11 @@ private fun JSONObject.toChatMessage(): ChatMessage {
 private fun JSONObject.optNullableString(name: String): String? {
     if (!has(name) || isNull(name)) return null
     return optString(name).takeIf { it.isNotBlank() }
+}
+
+private fun JSONObject.optNullableLong(name: String): Long? {
+    if (!has(name) || isNull(name)) return null
+    return optLong(name).takeIf { it > 0L }
 }
 
 private fun previewForRestored(messages: List<ChatMessage>): String {

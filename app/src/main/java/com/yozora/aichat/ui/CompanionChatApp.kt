@@ -196,9 +196,11 @@ import com.yozora.aichat.ui.chat.ChatBackground
 import com.yozora.aichat.ui.chat.ChatMessage
 import com.yozora.aichat.ui.chat.ChatSession
 import com.yozora.aichat.ui.chat.ChatViewModel
+import com.yozora.aichat.ui.chat.CreateDraftState
 import com.yozora.aichat.ui.chat.GeminiLiveVoice
 import com.yozora.aichat.ui.chat.GeminiThinkingEffort
 import com.yozora.aichat.ui.chat.GroupMember
+import com.yozora.aichat.ui.chat.ImportPreviewState
 import com.yozora.aichat.ui.chat.InstructionMode
 import com.yozora.aichat.ui.chat.LiveCallTranscriptLine
 import com.yozora.aichat.ui.chat.PersonaUiState
@@ -233,7 +235,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 
-private const val APP_VERSION_NAME = "2.2.1"
+private const val APP_VERSION_NAME = "2.2.2"
+private const val APP_VERSION_CODE = 224
 
 private fun Context.applyLanguageOverride(languageCode: String) {
     val locale = Locale.forLanguageTag(if (languageCode == "vi") "vi" else "en")
@@ -261,7 +264,7 @@ fun CompanionChatApp(
     var viewedImageUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var actionMessage by remember { mutableStateOf<ChatMessage?>(null) }
     var aboutDialogVisible by remember { mutableStateOf(false) }
-    val appVersionLabel = "${viewModel.appNameChoice.label} v$APP_VERSION_NAME"
+    val appVersionLabel = "${viewModel.appNameChoice.label} v$APP_VERSION_NAME ($APP_VERSION_CODE)"
     var activeRoleplayTab by remember { mutableStateOf(RoleplayTab.Discover) }
     var activeChatOpen by remember { mutableStateOf(false) }
     var pendingConfigExportSession by remember { mutableStateOf<ChatSession?>(null) }
@@ -770,6 +773,15 @@ fun CompanionChatApp(
             onTextChange = viewModel::updateTtsPreviewText,
             onDismiss = viewModel::dismissTtsPreview,
             onGenerate = viewModel::generateAndPlayTtsPreview
+        )
+    }
+
+    viewModel.importPreviewState?.let { preview ->
+        ImportPreviewSheet(
+            state = preview,
+            onDismiss = viewModel::dismissImportPreview,
+            onImport = { viewModel.confirmImportPreview(asCopy = false) },
+            onImportAsCopy = { viewModel.confirmImportPreview(asCopy = true) }
         )
     }
 
@@ -3809,6 +3821,135 @@ private fun SpeechPreviewSheet(
                             color = Color.White
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImportPreviewSheet(
+    state: ImportPreviewState,
+    onDismiss: () -> Unit,
+    onImport: () -> Unit,
+    onImportAsCopy: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.48f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss
+            ),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        Surface(
+            color = AppSurface,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            border = BorderStroke(1.dp, AppStroke),
+            shadowElevation = 18.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+        ) {
+            Column(
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 18.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .width(42.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(AppStroke)
+                )
+                Row(
+                    modifier = Modifier.padding(top = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Avatar(persona = state.session.persona, size = 64)
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Import ${state.sourceKind}",
+                            color = AppTextSecondary,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Text(
+                            text = state.session.persona.displayName.ifBlank { state.session.displayTitle() },
+                            color = AppTextPrimary,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${state.session.persona.traits.take(3).joinToString(", ").ifBlank { "No tags" }} · ${state.messageCount} messages",
+                            color = AppTextSecondary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                if (state.duplicateWarning != null) {
+                    Surface(
+                        color = Color(0xFFFFB74D).copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.45f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 14.dp)
+                    ) {
+                        Text(
+                            text = state.duplicateWarning,
+                            color = Color(0xFFFFCC80),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 18.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, AppStroke),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel", color = AppTextSecondary)
+                    }
+                    OutlinedButton(
+                        onClick = onImportAsCopy,
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, AppAccentSoft),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Import as Copy", color = AppAccentSoft)
+                    }
+                }
+                Button(
+                    onClick = onImport,
+                    colors = ButtonDefaults.buttonColors(containerColor = AppAccent),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp)
+                        .height(50.dp)
+                ) {
+                    Text("Import", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -7429,7 +7570,9 @@ private data class PresetCharacter(
     val greeting: String,
     val prompt: String,
     val tags: List<String>,
-    val avatarUri: android.net.Uri? = null
+    val avatarUri: android.net.Uri? = null,
+    val isFavorite: Boolean = false,
+    val pinnedAtMillis: Long? = null
 )
 
 private val PresetCharacters = emptyList<PresetCharacter>()
@@ -7633,10 +7776,14 @@ private fun DiscoverScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedTag by remember { mutableStateOf("All Tags") }
     var actionTarget by remember { mutableStateOf<ChatSession?>(null) }
+    var detailTarget by remember { mutableStateOf<PresetCharacter?>(null) }
 
     val customCharacters = viewModel.sessions.filter { session ->
         session.persona.displayName.isNotBlank()
-    }.map { session ->
+    }.sortedWith(
+        compareByDescending<ChatSession> { it.pinnedAtMillis ?: 0L }
+            .thenByDescending { it.isFavorite }
+    ).map { session ->
         PresetCharacter(
             sessionId = session.id,
             name = session.persona.displayName,
@@ -7645,7 +7792,9 @@ private fun DiscoverScreen(
             greeting = session.preview.takeIf { it != "No messages yet" && it.isNotBlank() } ?: "",
             prompt = session.persona.instructionPrompt,
             tags = session.persona.traits,
-            avatarUri = session.persona.avatarUri
+            avatarUri = session.persona.avatarUri,
+            isFavorite = session.isFavorite,
+            pinnedAtMillis = session.pinnedAtMillis
         )
     }
 
@@ -7660,7 +7809,7 @@ private fun DiscoverScreen(
             .entries
             .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key.lowercase() })
             .map { it.key }
-        listOf("All Tags") + userTags
+        listOf("All Tags", "Pinned", "Favorites") + userTags
     }
     LaunchedEffect(tagsList) {
         if (selectedTag !in tagsList) {
@@ -7673,6 +7822,10 @@ private fun DiscoverScreen(
                             char.tagline.contains(searchQuery, ignoreCase = true)
         val matchesTag = if (selectedTag == "All Tags") {
             true
+        } else if (selectedTag == "Pinned") {
+            char.pinnedAtMillis != null
+        } else if (selectedTag == "Favorites") {
+            char.isFavorite
         } else {
             char.tags.any { it.equals(selectedTag, ignoreCase = true) }
         }
@@ -7748,6 +7901,8 @@ private fun DiscoverScreen(
                     Text(
                         text = when {
                             tag == "All Tags" -> stringResource(R.string.tag_all)
+                            tag == "Pinned" -> "Pinned"
+                            tag == "Favorites" -> "Favorites"
                             else -> tag
                         },
                         color = textColor,
@@ -7825,6 +7980,7 @@ private fun DiscoverScreen(
                     pageCount = filteredCharacters.size,
                     pageIndex = page,
                     onChat = { onSelectCharacter(character) },
+                    onOpenDetail = { detailTarget = character },
                     onLongPress = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         actionTarget = character.sessionId?.let { id ->
@@ -7867,9 +8023,80 @@ private fun DiscoverScreen(
                 viewModel.cloneSession(session.id)
                 actionTarget = null
             },
+            onFavorite = {
+                viewModel.toggleSessionFavorite(session.id)
+                actionTarget = null
+            },
+            onPin = {
+                viewModel.toggleSessionPinned(session.id)
+                actionTarget = null
+            },
             onDelete = {
                 viewModel.deleteSession(session.id)
                 actionTarget = null
+            }
+        )
+    }
+
+    detailTarget?.let { character ->
+        val session = character.sessionId?.let { id -> viewModel.sessions.firstOrNull { it.id == id } }
+        CharacterDetailSheet(
+            character = character,
+            session = session,
+            onDismiss = { detailTarget = null },
+            onChat = {
+                detailTarget = null
+                onSelectCharacter(character)
+            },
+            onFavorite = session?.let { currentSession ->
+                {
+                    viewModel.toggleSessionFavorite(currentSession.id)
+                    detailTarget = detailTarget?.copy(isFavorite = !currentSession.isFavorite)
+                }
+            },
+            onPin = session?.let { currentSession ->
+                {
+                    viewModel.toggleSessionPinned(currentSession.id)
+                    detailTarget = detailTarget?.copy(
+                        pinnedAtMillis = if (currentSession.pinnedAtMillis == null) {
+                            System.currentTimeMillis()
+                        } else {
+                            null
+                        }
+                    )
+                }
+            },
+            onExport = session?.let { currentSession ->
+                {
+                    viewModel.autoExportSession(
+                        sessionId = currentSession.id,
+                        onSuccess = { path ->
+                            android.widget.Toast.makeText(context, "Saved: $path", android.widget.Toast.LENGTH_LONG).show()
+                        },
+                        onFailure = { err ->
+                            android.widget.Toast.makeText(context, "Export failed: $err", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                    detailTarget = null
+                }
+            },
+            onCloneConfig = session?.let { currentSession ->
+                {
+                    viewModel.duplicateSessionSettings(currentSession.id)
+                    detailTarget = null
+                }
+            },
+            onCloneSession = session?.let { currentSession ->
+                {
+                    viewModel.cloneSession(currentSession.id)
+                    detailTarget = null
+                }
+            },
+            onDelete = session?.let { currentSession ->
+                {
+                    viewModel.deleteSession(currentSession.id)
+                    detailTarget = null
+                }
             }
         )
     }
@@ -7882,6 +8109,7 @@ private fun CharacterCarouselCard(
     pageCount: Int,
     pageIndex: Int,
     onChat: () -> Unit,
+    onOpenDetail: () -> Unit,
     onLongPress: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -7894,7 +8122,7 @@ private fun CharacterCarouselCard(
             .fillMaxWidth()
             .padding(bottom = 18.dp)
             .combinedClickable(
-                onClick = {},
+                onClick = onOpenDetail,
                 onLongClick = onLongPress
             )
     ) {
@@ -8085,6 +8313,208 @@ private fun CarouselInfoChip(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CharacterDetailSheet(
+    character: PresetCharacter,
+    session: ChatSession?,
+    onDismiss: () -> Unit,
+    onChat: () -> Unit,
+    onFavorite: (() -> Unit)?,
+    onPin: (() -> Unit)?,
+    onExport: (() -> Unit)?,
+    onCloneConfig: (() -> Unit)?,
+    onCloneSession: (() -> Unit)?,
+    onDelete: (() -> Unit)?
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.5f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss
+            ),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        Surface(
+            color = LocalRoleplayColors.current.surface,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+            shadowElevation = 18.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+        ) {
+            Column(
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .width(42.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(LocalRoleplayColors.current.stroke)
+                )
+                Row(
+                    modifier = Modifier.padding(top = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        color = LocalRoleplayColors.current.surface2,
+                        shape = RoundedCornerShape(20.dp),
+                        border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+                        modifier = Modifier.size(92.dp)
+                    ) {
+                        if (character.avatarUri != null) {
+                            Image(
+                                painter = rememberAsyncImagePainter(character.avatarUri),
+                                contentDescription = "${character.name} avatar",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = character.name.take(1).uppercase(),
+                                    color = LocalRoleplayColors.current.accent,
+                                    style = MaterialTheme.typography.headlineLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = character.name,
+                            color = LocalRoleplayColors.current.textPrimary,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = character.author,
+                            color = LocalRoleplayColors.current.textSecondary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                if (character.tags.isNotEmpty()) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 16.dp)
+                    ) {
+                        character.tags.take(12).forEach { tag ->
+                            Surface(
+                                color = LocalRoleplayColors.current.accent.copy(alpha = 0.14f),
+                                shape = RoundedCornerShape(999.dp),
+                                border = BorderStroke(1.dp, LocalRoleplayColors.current.accent.copy(alpha = 0.28f))
+                            ) {
+                                Text(
+                                    text = tag,
+                                    color = LocalRoleplayColors.current.accent,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                Text(
+                    text = character.tagline,
+                    color = LocalRoleplayColors.current.textPrimary,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(top = 16.dp)
+                )
+                Text(
+                    text = character.greeting.ifBlank { character.prompt.ifBlank { "No opening preview yet." } },
+                    color = LocalRoleplayColors.current.textSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 5,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                Button(
+                    onClick = onChat,
+                    colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.accent),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 18.dp)
+                        .height(52.dp)
+                ) {
+                    Text("Chat", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+                if (session != null) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { onFavorite?.invoke() },
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(if (session.isFavorite) "Unfavorite" else "Favorite")
+                        }
+                        OutlinedButton(
+                            onClick = { onPin?.invoke() },
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(if (session.pinnedAtMillis != null) "Unpin" else "Pin")
+                        }
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    ) {
+                        OutlinedButton(onClick = { onExport?.invoke() }, modifier = Modifier.weight(1f)) {
+                            Text("Export")
+                        }
+                        OutlinedButton(onClick = { onCloneConfig?.invoke() }, modifier = Modifier.weight(1f)) {
+                            Text("Clone config")
+                        }
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    ) {
+                        OutlinedButton(onClick = { onCloneSession?.invoke() }, modifier = Modifier.weight(1f)) {
+                            Text("Clone session")
+                        }
+                        OutlinedButton(onClick = { onDelete?.invoke() }, modifier = Modifier.weight(1f)) {
+                            Text("Delete", color = Color(0xFFFF7E8B))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CharacterCard(
@@ -8200,6 +8630,8 @@ private fun RoleplayActionSheet(
     onExport: () -> Unit,
     onCloneConfig: () -> Unit,
     onCloneSession: () -> Unit,
+    onFavorite: () -> Unit,
+    onPin: () -> Unit,
     onDelete: () -> Unit
 ) {
     Box(
@@ -8261,6 +8693,16 @@ private fun RoleplayActionSheet(
                     icon = Icons.Rounded.ContentCopy,
                     label = stringResource(R.string.action_clone_session),
                     onClick = onCloneSession
+                )
+                RoleplayActionSheetRow(
+                    icon = Icons.Rounded.FavoriteBorder,
+                    label = if (session.isFavorite) "Unfavorite" else "Favorite",
+                    onClick = onFavorite
+                )
+                RoleplayActionSheetRow(
+                    icon = Icons.Rounded.StarBorder,
+                    label = if (session.pinnedAtMillis != null) "Unpin" else "Pin",
+                    onClick = onPin
                 )
                 RoleplayActionSheetRow(
                     icon = Icons.Rounded.DeleteOutline,
@@ -8445,6 +8887,14 @@ private fun ChatsScreen(
                 viewModel.cloneSession(session.id)
                 actionTarget = null
             },
+            onFavorite = {
+                viewModel.toggleSessionFavorite(session.id)
+                actionTarget = null
+            },
+            onPin = {
+                viewModel.toggleSessionPinned(session.id)
+                actionTarget = null
+            },
             onDelete = {
                 viewModel.deleteSession(session.id)
                 actionTarget = null
@@ -8462,17 +8912,20 @@ private fun CreateScreen(
     onImportConfig: () -> Unit
 ) {
     val context = LocalContext.current
-    var name by remember { mutableStateOf("") }
-    var tagline by remember { mutableStateOf("") }
-    var selectedTags by remember { mutableStateOf(listOf<String>()) }
-    var selectedGender by remember { mutableStateOf<String?>(null) }
+    val restoredDraft = viewModel.createDraftState
+    var draftApplied by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf(restoredDraft.name) }
+    var tagline by remember { mutableStateOf(restoredDraft.tagline) }
+    var selectedTags by remember { mutableStateOf(restoredDraft.selectedTags) }
+    var selectedGender by remember { mutableStateOf(restoredDraft.selectedGender) }
     var showTagPicker by remember { mutableStateOf(false) }
     var showAutoFill by remember { mutableStateOf(false) }
-    var prompt by remember { mutableStateOf("") }
-    var greeting by remember { mutableStateOf("") }
-    var storyLore by remember { mutableStateOf("") }
-    var avatarUri by remember { mutableStateOf<android.net.Uri?>(null) }
-    var background by remember { mutableStateOf<ChatBackground>(ChatBackground.DarkMode) }
+    var prompt by remember { mutableStateOf(restoredDraft.prompt) }
+    var greeting by remember { mutableStateOf(restoredDraft.greeting) }
+    var storyLore by remember { mutableStateOf(restoredDraft.storyLore) }
+    var avatarUri by remember { mutableStateOf<android.net.Uri?>(restoredDraft.avatarUri) }
+    var background by remember { mutableStateOf<ChatBackground>(restoredDraft.background) }
+    var createAttempted by remember { mutableStateOf(false) }
 
     fun persistPickedImage(uri: android.net.Uri) {
         runCatching {
@@ -8493,6 +8946,8 @@ private fun CreateScreen(
         storyLore = ""
         avatarUri = null
         background = ChatBackground.DarkMode
+        createAttempted = false
+        viewModel.clearCreateDraft()
     }
 
     fun selectGender(tag: String) {
@@ -8518,6 +8973,40 @@ private fun CreateScreen(
             }
         }
     )
+
+    LaunchedEffect(restoredDraft) {
+        if (!draftApplied && restoredDraft.hasContent) {
+            name = restoredDraft.name
+            tagline = restoredDraft.tagline
+            selectedTags = restoredDraft.selectedTags
+            selectedGender = restoredDraft.selectedGender
+            prompt = restoredDraft.prompt
+            greeting = restoredDraft.greeting
+            storyLore = restoredDraft.storyLore
+            avatarUri = restoredDraft.avatarUri
+            background = restoredDraft.background
+        }
+        draftApplied = true
+    }
+
+    LaunchedEffect(name, tagline, selectedTags, selectedGender, prompt, greeting, storyLore, avatarUri, background, draftApplied) {
+        if (draftApplied) {
+            delay(350)
+            viewModel.updateCreateDraft(
+                CreateDraftState(
+                    name = name,
+                    tagline = tagline,
+                    selectedTags = selectedTags,
+                    selectedGender = selectedGender,
+                    prompt = prompt,
+                    greeting = greeting,
+                    storyLore = storyLore,
+                    avatarUri = avatarUri,
+                    background = background
+                )
+            )
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -8582,6 +9071,14 @@ private fun CreateScreen(
             }
         }
 
+        CreateLivePreviewCard(
+            name = name,
+            tagline = tagline,
+            greeting = greeting,
+            tags = selectedTags,
+            avatarUri = avatarUri
+        )
+
         CreateFormCard(title = stringResource(R.string.character_image_section)) {
             Surface(
                 color = LocalRoleplayColors.current.surface2,
@@ -8642,7 +9139,8 @@ private fun CreateScreen(
             value = name,
             onValueChange = { name = it.take(32) },
             placeholder = stringResource(R.string.character_name_placeholder),
-            singleLine = true
+            singleLine = true,
+            footer = if (createAttempted && name.isBlank()) "Name is required." else null
         )
 
         CreateFormCard(title = stringResource(R.string.gender_label)) {
@@ -8746,6 +9244,7 @@ private fun CreateScreen(
         GradientCreateButton(
             enabled = name.isNotBlank(),
             onClick = {
+                createAttempted = true
                 if (name.isNotBlank()) {
                     viewModel.createSessionWithPersona(
                         name = name,
@@ -8757,6 +9256,7 @@ private fun CreateScreen(
                         avatarUri = avatarUri,
                         background = background
                     )
+                    viewModel.clearCreateDraft()
                     onCreated()
                 }
             },
@@ -8822,6 +9322,93 @@ private fun CreateScreen(
 }
 
 private val CreateGenderTags = listOf("Male", "Female", "Other")
+
+@Composable
+private fun CreateLivePreviewCard(
+    name: String,
+    tagline: String,
+    greeting: String,
+    tags: List<String>,
+    avatarUri: android.net.Uri?
+) {
+    Surface(
+        color = LocalRoleplayColors.current.surface,
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 14.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                color = LocalRoleplayColors.current.surface2,
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+                modifier = Modifier.size(86.dp)
+            ) {
+                if (avatarUri != null) {
+                    Image(
+                        painter = rememberAsyncImagePainter(avatarUri),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = name.take(1).ifBlank { "Z" }.uppercase(),
+                            color = LocalRoleplayColors.current.accent,
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = name.ifBlank { stringResource(R.string.character_name_placeholder) },
+                    color = LocalRoleplayColors.current.textPrimary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = tagline.ifBlank { greeting.ifBlank { stringResource(R.string.short_tagline_placeholder) } },
+                    color = LocalRoleplayColors.current.textSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                if (tags.isNotEmpty()) {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(top = 8.dp)
+                    ) {
+                        items(tags.take(6)) { tag ->
+                            Surface(
+                                color = LocalRoleplayColors.current.accent.copy(alpha = 0.14f),
+                                shape = RoundedCornerShape(999.dp)
+                            ) {
+                                Text(
+                                    text = tag,
+                                    color = LocalRoleplayColors.current.accent,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun CreateFormCard(
@@ -8992,7 +9579,7 @@ private fun GradientCreateButton(
                     listOf(Color(0xFF67E8F9), Color(0xFF8B5CF6), Color(0xFFFF5D8F))
                 )
             )
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(onClick = onClick)
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
@@ -9692,8 +10279,11 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
                 text = when (updateState) {
                     AppUpdateState.Unknown -> "Checking app version..."
                     AppUpdateState.Checking -> "Checking for updates..."
-                    is AppUpdateState.UpToDate -> "App is updated - v${updateState.currentVersion}"
-                    is AppUpdateState.UpdateAvailable -> "New version available - v${updateState.latestVersion}"
+                    is AppUpdateState.UpToDate -> "App is updated - v${updateState.currentVersion} (${updateState.currentVersionCode})"
+                    is AppUpdateState.UpdateAvailable -> {
+                        val latestCode = updateState.latestVersionCode?.let { " ($it)" }.orEmpty()
+                        "New version available - v${updateState.latestVersion}$latestCode"
+                    }
                     is AppUpdateState.Downloading -> "Downloading v${updateState.latestVersion}"
                     is AppUpdateState.InstallerOpened -> "Installer opened. Return here after installing."
                     is AppUpdateState.PermissionNeeded -> "Install permission needed for v${updateState.latestVersion}"

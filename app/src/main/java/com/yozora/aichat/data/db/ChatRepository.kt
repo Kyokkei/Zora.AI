@@ -61,6 +61,8 @@ class ChatRepository private constructor(
                 preview = sessionEntity.preview.ifBlank { "No messages yet" },
                 updatedAt = sessionEntity.updatedAt.ifBlank { "Now" },
                 draft = sessionEntity.draft,
+                isFavorite = sessionEntity.isFavorite,
+                pinnedAtMillis = sessionEntity.pinnedAtMillis,
                 messages = dao.messagesForSession(sessionEntity.id).map { it.toChatMessage() }
             )
         }
@@ -91,7 +93,9 @@ class ChatRepository private constructor(
                 preview = session.preview,
                 updatedAt = session.updatedAt,
                 sortOrder = index,
-                draft = session.draft
+                draft = session.draft,
+                isFavorite = session.isFavorite,
+                pinnedAtMillis = session.pinnedAtMillis
             )
         }
         val memberEntities = sessions.flatMap { session ->
