@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="true"
@@ -37,38 +38,10 @@
         </activity-alias>
 
         <activity-alias
-            android:name="${applicationId}.MainActivityZoraWaifuAlias"
-            android:enabled="false"
-            android:exported="true"
-            android:icon="@drawable/app_icon_waifu"
-            android:label="Zora.AI"
-            android:targetActivity="com.yozora.aichat.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
-
-        <activity-alias
             android:name="${applicationId}.MainActivitySlvMinimalistAlias"
             android:enabled="false"
             android:exported="true"
             android:icon="@drawable/app_icon_minimalist"
-            android:label="SanLoVerse (SLV)"
-            android:targetActivity="com.yozora.aichat.MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
-
-        <activity-alias
-            android:name="${applicationId}.MainActivitySlvWaifuAlias"
-            android:enabled="false"
-            android:exported="true"
-            android:icon="@drawable/app_icon_waifu"
             android:label="SanLoVerse (SLV)"
             android:targetActivity="com.yozora.aichat.MainActivity">
             <intent-filter>

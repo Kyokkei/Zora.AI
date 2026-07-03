@@ -100,6 +100,7 @@ import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MicOff
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
@@ -132,6 +133,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -140,6 +142,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -148,6 +151,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -179,6 +183,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.rememberAsyncImagePainter
 import com.yozora.aichat.R
 import com.yozora.aichat.ui.chat.AnimeImagePreset
+import com.yozora.aichat.ui.chat.AppUpdateState
 import com.yozora.aichat.ui.chat.AppIconChoice
 import com.yozora.aichat.ui.chat.AppNameChoice
 import com.yozora.aichat.ui.chat.ApiVendor
@@ -689,13 +694,12 @@ fun CompanionChatApp(
         AppSettingsDialog(
             selectedName = viewModel.appNameChoice,
             selectedIcon = viewModel.appIconChoice,
-            globalMemoryBlock = viewModel.globalMemoryBlock,
             nsfwModeEnabled = viewModel.nsfwModeEnabled,
             roleplayUiModeEnabled = viewModel.roleplayUiModeEnabled,
+            useLightColors = viewModel.roleplayLightModeEnabled,
             languageCode = viewModel.languageCode,
             onNameChange = viewModel::updateAppName,
             onIconChange = viewModel::updateAppIcon,
-            onGlobalMemoryChange = viewModel::updateGlobalMemoryBlock,
             onNsfwModeChange = viewModel::updateNsfwModeEnabled,
             onRoleplayUiModeChange = viewModel::updateRoleplayUiModeEnabled,
             onLanguageChange = viewModel::updateLanguage,
@@ -6444,25 +6448,31 @@ private fun formatPacificResetCountdown(): String {
 @Composable
 private fun LanguagePickerSection(
     languageCode: String,
-    onLanguageChange: (String) -> Unit
+    onLanguageChange: (String) -> Unit,
+    surfaceColor: Color = AppSurface,
+    surface2Color: Color = AppSurface2,
+    strokeColor: Color = AppStroke,
+    textPrimaryColor: Color = AppTextPrimary,
+    textSecondaryColor: Color = AppTextSecondary,
+    accentColor: Color = Color(0xFFFF5D8F)
 ) {
     Surface(
-        color = AppSurface,
+        color = surfaceColor,
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, AppStroke),
+        border = BorderStroke(1.dp, strokeColor),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(R.string.language_label),
-                color = AppTextPrimary,
+                color = textPrimaryColor,
                 style = MaterialTheme.typography.labelLarge
             )
             Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val isEn = languageCode != "vi"
                 Surface(
-                    color = if (isEn) Color(0xFFFF5D8F) else AppSurface2,
+                    color = if (isEn) accentColor else surface2Color,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .weight(1f)
@@ -6471,12 +6481,12 @@ private fun LanguagePickerSection(
                     Text(
                         text = stringResource(R.string.lang_english),
                         textAlign = TextAlign.Center,
-                        color = if (isEn) Color.White else AppTextSecondary,
+                        color = if (isEn) Color.White else textSecondaryColor,
                         modifier = Modifier.padding(12.dp)
                     )
                 }
                 Surface(
-                    color = if (!isEn) Color(0xFFFF5D8F) else AppSurface2,
+                    color = if (!isEn) accentColor else surface2Color,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .weight(1f)
@@ -6485,7 +6495,7 @@ private fun LanguagePickerSection(
                     Text(
                         text = stringResource(R.string.lang_vietnamese),
                         textAlign = TextAlign.Center,
-                        color = if (!isEn) Color.White else AppTextSecondary,
+                        color = if (!isEn) Color.White else textSecondaryColor,
                         modifier = Modifier.padding(12.dp)
                     )
                 }
@@ -6498,23 +6508,30 @@ private fun LanguagePickerSection(
 private fun AppSettingsDialog(
     selectedName: AppNameChoice,
     selectedIcon: AppIconChoice,
-    globalMemoryBlock: String,
     nsfwModeEnabled: Boolean,
     roleplayUiModeEnabled: Boolean,
+    useLightColors: Boolean,
     languageCode: String,
     onNameChange: (AppNameChoice) -> Unit,
     onIconChange: (AppIconChoice) -> Unit,
-    onGlobalMemoryChange: (String) -> Unit,
     onNsfwModeChange: (Boolean) -> Unit,
     onRoleplayUiModeChange: (Boolean) -> Unit,
     onLanguageChange: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val surfaceColor = if (useLightColors) Color.White else AppSurface
+    val surface2Color = if (useLightColors) Color(0xFFF0F0F0) else AppSurface2
+    val strokeColor = if (useLightColors) Color(0xFFE0E0E0) else AppStroke
+    val textPrimaryColor = if (useLightColors) Color.Black else AppTextPrimary
+    val textSecondaryColor = if (useLightColors) Color(0xFF555555) else AppTextSecondary
+    val accentColor = if (useLightColors) Color(0xFF57DDF7) else AppAccent
+    val accentSoftColor = if (useLightColors) Color(0xFF57DDF7) else AppAccentSoft
+    val accentDimColor = if (useLightColors) Color(0xFF57DDF7).copy(alpha = 0.18f) else AppAccentDim
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = AppSurface,
-        titleContentColor = AppTextPrimary,
-        textContentColor = AppTextSecondary,
+        containerColor = surfaceColor,
+        titleContentColor = textPrimaryColor,
+        textContentColor = textSecondaryColor,
         title = {
             Text(
                 text = "App settings",
@@ -6529,19 +6546,25 @@ private fun AppSettingsDialog(
             ) {
                 LanguagePickerSection(
                     languageCode = languageCode,
-                    onLanguageChange = onLanguageChange
+                    onLanguageChange = onLanguageChange,
+                    surfaceColor = surfaceColor,
+                    surface2Color = surface2Color,
+                    strokeColor = strokeColor,
+                    textPrimaryColor = textPrimaryColor,
+                    textSecondaryColor = textSecondaryColor,
+                    accentColor = accentColor
                 )
                 Spacer(modifier = Modifier.height(18.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Roleplay UI Mode",
-                            color = AppTextPrimary,
+                            color = textPrimaryColor,
                             style = MaterialTheme.typography.labelLarge
                         )
                         Text(
                             text = if (roleplayUiModeEnabled) stringResource(R.string.roleplay_ui_mode_active) else stringResource(R.string.roleplay_ui_mode_inactive),
-                            color = AppTextSecondary,
+                            color = textSecondaryColor,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(top = 3.dp)
                         )
@@ -6556,7 +6579,7 @@ private fun AppSettingsDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "NSFW mode",
-                            color = AppTextPrimary,
+                            color = textPrimaryColor,
                             style = MaterialTheme.typography.labelLarge
                         )
                         Text(
@@ -6565,7 +6588,7 @@ private fun AppSettingsDialog(
                             } else {
                                 stringResource(R.string.nsfw_mode_inactive)
                             },
-                            color = AppTextSecondary,
+                            color = textSecondaryColor,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(top = 3.dp)
                         )
@@ -6578,86 +6601,53 @@ private fun AppSettingsDialog(
                 Spacer(modifier = Modifier.height(18.dp))
                 Text(
                     text = "App name",
-                    color = AppTextPrimary,
+                    color = textPrimaryColor,
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.padding(bottom = 10.dp)
                 )
                 AppNameChoiceRow(
                     choice = AppNameChoice.Zora,
                     selected = selectedName == AppNameChoice.Zora,
-                    onClick = { onNameChange(AppNameChoice.Zora) }
+                    onClick = { onNameChange(AppNameChoice.Zora) },
+                    surface2Color = surface2Color,
+                    strokeColor = strokeColor,
+                    textPrimaryColor = textPrimaryColor,
+                    accentColor = accentColor,
+                    accentDimColor = accentDimColor
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 AppNameChoiceRow(
                     choice = AppNameChoice.SanLoVerse,
                     selected = selectedName == AppNameChoice.SanLoVerse,
-                    onClick = { onNameChange(AppNameChoice.SanLoVerse) }
+                    onClick = { onNameChange(AppNameChoice.SanLoVerse) },
+                    surface2Color = surface2Color,
+                    strokeColor = strokeColor,
+                    textPrimaryColor = textPrimaryColor,
+                    accentColor = accentColor,
+                    accentDimColor = accentDimColor
                 )
                 Spacer(modifier = Modifier.height(18.dp))
                 Text(
                     text = "App icon",
-                    color = AppTextPrimary,
+                    color = textPrimaryColor,
                     style = MaterialTheme.typography.labelLarge,
                     modifier = Modifier.padding(bottom = 10.dp)
                 )
                 AppIconChoiceRow(
                     choice = AppIconChoice.Minimalist,
                     selected = selectedIcon == AppIconChoice.Minimalist,
-                    onClick = { onIconChange(AppIconChoice.Minimalist) }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                AppIconChoiceRow(
-                    choice = AppIconChoice.Waifu,
-                    selected = selectedIcon == AppIconChoice.Waifu,
-                    onClick = { onIconChange(AppIconChoice.Waifu) }
-                )
-                Spacer(modifier = Modifier.height(18.dp))
-                Text(
-                    text = "Memory",
-                    color = AppTextPrimary,
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-                Text(
-                    text = "Stored ${globalMemoryBlock.length} / 64,000 chars. Up to 24,000 chars are injected per request.",
-                    color = AppTextSecondary,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-                OutlinedTextField(
-                    value = globalMemoryBlock,
-                    onValueChange = onGlobalMemoryChange,
-                    minLines = 5,
-                    maxLines = 9,
-                    placeholder = {
-                        Text(
-                            text = "Things every chat may remember, such as your preferences, recurring roleplay details, or writing style.",
-                            color = AppTextSecondary
-                        )
-                    },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = AppTextPrimary,
-                        unfocusedTextColor = AppTextPrimary,
-                        focusedBorderColor = AppAccent.copy(alpha = 0.7f),
-                        unfocusedBorderColor = AppStroke,
-                        cursorColor = AppAccent,
-                        focusedContainerColor = AppSurface2,
-                        unfocusedContainerColor = AppSurface2
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    text = "Sessions only read this when their memory switch is on.",
-                    color = AppTextSecondary,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = 8.dp)
+                    onClick = { onIconChange(AppIconChoice.Minimalist) },
+                    surface2Color = surface2Color,
+                    strokeColor = strokeColor,
+                    textPrimaryColor = textPrimaryColor,
+                    accentColor = accentColor,
+                    accentDimColor = accentDimColor
                 )
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text(text = "Done", color = AppAccentSoft)
+                Text(text = "Done", color = accentSoftColor)
             }
         }
     )
@@ -6847,13 +6837,23 @@ private fun AboutLinkRow(
 private fun AppNameChoiceRow(
     choice: AppNameChoice,
     selected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    surface2Color: Color = AppSurface2,
+    strokeColor: Color = AppStroke,
+    textPrimaryColor: Color = AppTextPrimary,
+    accentColor: Color = AppAccent,
+    accentDimColor: Color = AppAccentDim
 ) {
     SettingsChoiceRow(
         selected = selected,
         onClick = onClick,
         leading = null,
-        label = choice.label
+        label = choice.label,
+        surface2Color = surface2Color,
+        strokeColor = strokeColor,
+        textPrimaryColor = textPrimaryColor,
+        accentColor = accentColor,
+        accentDimColor = accentDimColor
     )
 }
 
@@ -6861,7 +6861,12 @@ private fun AppNameChoiceRow(
 private fun AppIconChoiceRow(
     choice: AppIconChoice,
     selected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    surface2Color: Color = AppSurface2,
+    strokeColor: Color = AppStroke,
+    textPrimaryColor: Color = AppTextPrimary,
+    accentColor: Color = AppAccent,
+    accentDimColor: Color = AppAccentDim
 ) {
     SettingsChoiceRow(
         selected = selected,
@@ -6876,7 +6881,12 @@ private fun AppIconChoiceRow(
                     .clip(RoundedCornerShape(12.dp))
             )
         },
-        label = choice.label
+        label = choice.label,
+        surface2Color = surface2Color,
+        strokeColor = strokeColor,
+        textPrimaryColor = textPrimaryColor,
+        accentColor = accentColor,
+        accentDimColor = accentDimColor
     )
 }
 
@@ -6885,12 +6895,17 @@ private fun SettingsChoiceRow(
     selected: Boolean,
     onClick: () -> Unit,
     leading: (@Composable () -> Unit)?,
-    label: String
+    label: String,
+    surface2Color: Color = AppSurface2,
+    strokeColor: Color = AppStroke,
+    textPrimaryColor: Color = AppTextPrimary,
+    accentColor: Color = AppAccent,
+    accentDimColor: Color = AppAccentDim
 ) {
     Surface(
-        color = if (selected) AppAccentDim else AppSurface2,
+        color = if (selected) accentDimColor else surface2Color,
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, if (selected) AppAccent else AppStroke),
+        border = BorderStroke(1.dp, if (selected) accentColor else strokeColor),
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
@@ -6905,13 +6920,13 @@ private fun SettingsChoiceRow(
             }
             Text(
                 text = label,
-                color = AppTextPrimary,
+                color = textPrimaryColor,
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.weight(1f)
             )
             if (selected) {
                 Surface(
-                    color = AppAccent,
+                    color = accentColor,
                     shape = CircleShape,
                     modifier = Modifier.size(10.dp)
                 ) {}
@@ -6923,7 +6938,6 @@ private fun SettingsChoiceRow(
 private fun AppIconChoice.iconResource(): Int {
     return when (this) {
         AppIconChoice.Minimalist -> R.drawable.app_icon_minimalist
-        AppIconChoice.Waifu -> R.drawable.app_icon_waifu
     }
 }
 
@@ -7403,6 +7417,50 @@ private data class PresetCharacter(
 
 private val PresetCharacters = emptyList<PresetCharacter>()
 
+private data class RoleplayColors(
+    val background: Color,
+    val surface: Color,
+    val surface2: Color,
+    val stroke: Color,
+    val textPrimary: Color,
+    val textSecondary: Color,
+    val accent: Color,
+    val actionAccent: Color,
+    val accentSoft: Color,
+    val buttonCyan: Color,
+    val isLight: Boolean
+)
+
+private val RoleplayDarkColors = RoleplayColors(
+    background = AppBackground,
+    surface = AppSurface,
+    surface2 = AppSurface2,
+    stroke = AppStroke,
+    textPrimary = AppTextPrimary,
+    textSecondary = AppTextSecondary,
+    accent = Color(0xFFFF5D8F),
+    actionAccent = AppAccentSoft,
+    accentSoft = AppAccentSoft,
+    buttonCyan = Color(0xFF80DBEE),
+    isLight = false
+)
+
+private val RoleplayLightColors = RoleplayColors(
+    background = Color(0xFFF8F8F8),
+    surface = Color.White,
+    surface2 = Color(0xFFF0F0F0),
+    stroke = Color(0xFFE0E0E0),
+    textPrimary = Color.Black,
+    textSecondary = Color(0xFF555555),
+    accent = Color(0xFFE60060),
+    actionAccent = Color(0xFFE60060),
+    accentSoft = Color(0xFF57DDF7),
+    buttonCyan = Color(0xFF80DBEE),
+    isLight = true
+)
+
+private val LocalRoleplayColors = staticCompositionLocalOf { RoleplayDarkColors }
+
 @Composable
 private fun RoleplayHubLayout(
     viewModel: ChatViewModel,
@@ -7412,66 +7470,76 @@ private fun RoleplayHubLayout(
     onImportSession: () -> Unit,
     onImportConfig: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AppBackground)
-            .statusBarsPadding()
-    ) {
-        Box(
+    val genderAccent = when (viewModel.userProfileGender) {
+        "female" -> Color(0xFFF858A3)
+        "male" -> Color(0xFF57DDF7)
+        else -> Color(0xFF80DBEE)
+    }
+    val baseColors = if (viewModel.roleplayLightModeEnabled) RoleplayLightColors else RoleplayDarkColors
+    val colors = if (baseColors.isLight) baseColors.copy(accent = genderAccent) else baseColors
+
+    CompositionLocalProvider(LocalRoleplayColors provides colors) {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
+                .fillMaxSize()
+                .background(LocalRoleplayColors.current.background)
+                .statusBarsPadding()
         ) {
-            when (activeTab) {
-                RoleplayTab.Discover -> {
-                    DiscoverScreen(
-                        viewModel = viewModel,
-                        onSelectCharacter = { preset ->
-                            val existing = if (preset.sessionId != null) {
-                                viewModel.sessions.firstOrNull { it.id == preset.sessionId }
-                            } else {
-                                viewModel.sessions.firstOrNull { it.persona.displayName.equals(preset.name, ignoreCase = true) }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                when (activeTab) {
+                    RoleplayTab.Discover -> {
+                        DiscoverScreen(
+                            viewModel = viewModel,
+                            onSelectCharacter = { preset ->
+                                val existing = if (preset.sessionId != null) {
+                                    viewModel.sessions.firstOrNull { it.id == preset.sessionId }
+                                } else {
+                                    viewModel.sessions.firstOrNull { it.persona.displayName.equals(preset.name, ignoreCase = true) }
+                                }
+                                if (existing != null) {
+                                    viewModel.selectSession(existing.id)
+                                    onOpenChat()
+                                } else {
+                                    viewModel.createSessionWithPersona(
+                                        name = preset.name,
+                                        tagline = preset.tagline,
+                                        prompt = preset.prompt,
+                                        tags = preset.tags,
+                                        greeting = preset.greeting
+                                    )
+                                    onOpenChat()
+                                }
                             }
-                            if (existing != null) {
-                                viewModel.selectSession(existing.id)
-                                onOpenChat()
-                            } else {
-                                viewModel.createSessionWithPersona(
-                                    name = preset.name,
-                                    tagline = preset.tagline,
-                                    prompt = preset.prompt,
-                                    tags = preset.tags,
-                                    greeting = preset.greeting
-                                )
+                        )
+                    }
+                    RoleplayTab.Chats -> {
+                        ChatsScreen(
+                            viewModel = viewModel,
+                            onSelectSession = { sessionId ->
+                                viewModel.selectSession(sessionId)
                                 onOpenChat()
                             }
-                        }
-                    )
-                }
-                RoleplayTab.Chats -> {
-                    ChatsScreen(
-                        viewModel = viewModel,
-                        onSelectSession = { sessionId ->
-                            viewModel.selectSession(sessionId)
-                            onOpenChat()
-                        }
-                    )
-                }
-                RoleplayTab.Create -> {
-                    CreateScreen(
-                        viewModel = viewModel,
-                        onCreated = onOpenChat,
-                        onImportSession = onImportSession,
-                        onImportConfig = onImportConfig
-                    )
-                }
-                RoleplayTab.Settings -> {
-                    RoleplaySettingsScreen(viewModel = viewModel)
+                        )
+                    }
+                    RoleplayTab.Create -> {
+                        CreateScreen(
+                            viewModel = viewModel,
+                            onCreated = onOpenChat,
+                            onImportSession = onImportSession,
+                            onImportConfig = onImportConfig
+                        )
+                    }
+                    RoleplayTab.Settings -> {
+                        RoleplaySettingsScreen(viewModel = viewModel)
+                    }
                 }
             }
+            RoleplayBottomBar(activeTab = activeTab, onTabChange = onTabChange)
         }
-        RoleplayBottomBar(activeTab = activeTab, onTabChange = onTabChange)
     }
 }
 
@@ -7488,8 +7556,8 @@ private fun RoleplayBottomBar(
     )
 
     Surface(
-        color = AppSurface,
-        border = BorderStroke(1.dp, AppStroke.copy(alpha = 0.6f)),
+        color = LocalRoleplayColors.current.surface,
+        border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke.copy(alpha = 0.6f)),
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
@@ -7504,7 +7572,7 @@ private fun RoleplayBottomBar(
         ) {
             items.forEach { (tab, label, icon) ->
                 val selected = activeTab == tab
-                val tint = if (selected) Color(0xFFFF5D8F) else AppTextSecondary
+                val tint = if (selected) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.textSecondary
 
                 Column(
                     modifier = Modifier
@@ -7605,7 +7673,7 @@ private fun DiscoverScreen(
                 text = "Zora.AI",
                 style = TextStyle(
                     brush = Brush.horizontalGradient(
-                        colors = listOf(Color(0xFF8B5CF6), Color(0xFFFF5D8F))
+                        colors = listOf(Color(0xFF8B5CF6), LocalRoleplayColors.current.accent)
                     ),
                     fontSize = 32.sp,
                     fontWeight = FontWeight.Bold,
@@ -7620,15 +7688,15 @@ private fun DiscoverScreen(
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text(stringResource(R.string.search_characters), color = AppTextMuted) },
-            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, tint = AppTextSecondary) },
-            textStyle = TextStyle(color = AppTextPrimary),
+            placeholder = { Text(stringResource(R.string.search_characters), color = LocalRoleplayColors.current.textSecondary) },
+            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, tint = LocalRoleplayColors.current.textSecondary) },
+            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
             shape = RoundedCornerShape(24.dp),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = AppSurface,
-                unfocusedContainerColor = AppSurface,
-                focusedBorderColor = Color(0xFFFF5D8F),
-                unfocusedBorderColor = AppStroke
+                focusedContainerColor = LocalRoleplayColors.current.surface,
+                unfocusedContainerColor = LocalRoleplayColors.current.surface,
+                focusedBorderColor = LocalRoleplayColors.current.accent,
+                unfocusedBorderColor = LocalRoleplayColors.current.stroke
             ),
             modifier = Modifier
                 .fillMaxWidth()
@@ -7645,9 +7713,9 @@ private fun DiscoverScreen(
         ) {
             items(tagsList) { tag ->
                 val selected = selectedTag == tag
-                val chipColor = if (selected) Color(0xFFFF5D8F) else AppSurface
-                val textColor = if (selected) Color.White else AppTextSecondary
-                val borderStroke = if (selected) null else BorderStroke(1.dp, AppStroke)
+                val chipColor = if (selected) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.surface
+                val textColor = if (selected) Color.White else LocalRoleplayColors.current.textSecondary
+                val borderStroke = if (selected) null else BorderStroke(1.dp, LocalRoleplayColors.current.stroke)
 
                 Surface(
                     color = chipColor,
@@ -7675,7 +7743,7 @@ private fun DiscoverScreen(
         // 2-Column Grid
         if (filteredCharacters.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.no_characters_found), color = AppTextSecondary)
+                Text(stringResource(R.string.no_characters_found), color = LocalRoleplayColors.current.textSecondary)
             }
         } else {
             val chunked = filteredCharacters.chunked(2)
@@ -7769,9 +7837,9 @@ private fun CharacterCard(
     onLongPress: (() -> Unit)? = null
 ) {
     Surface(
-        color = AppSurface,
+        color = LocalRoleplayColors.current.surface,
         shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, AppStroke.copy(alpha = 0.6f)),
+        border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke.copy(alpha = 0.6f)),
         modifier = Modifier
             .fillMaxWidth()
             .height(250.dp)
@@ -7787,7 +7855,7 @@ private fun CharacterCard(
                     .height(140.dp)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color(0xFFFF5D8F).copy(alpha = 0.15f), Color(0xFF8B5CF6).copy(alpha = 0.15f))
+                            listOf(LocalRoleplayColors.current.accent.copy(alpha = 0.15f), Color(0xFF8B5CF6).copy(alpha = 0.15f))
                         )
                     ),
                 contentAlignment = Alignment.Center
@@ -7804,7 +7872,7 @@ private fun CharacterCard(
                         text = char.name.take(1).uppercase(),
                         style = TextStyle(
                             brush = Brush.horizontalGradient(
-                                colors = listOf(Color(0xFFFF5D8F), Color(0xFF8B5CF6))
+                                colors = listOf(LocalRoleplayColors.current.accent, Color(0xFF8B5CF6))
                             ),
                             fontSize = 58.sp,
                             fontWeight = FontWeight.Bold
@@ -7822,7 +7890,7 @@ private fun CharacterCard(
                 Column {
                     Text(
                         text = char.name,
-                        color = AppTextPrimary,
+                        color = LocalRoleplayColors.current.textPrimary,
                         style = MaterialTheme.typography.labelLarge,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -7830,7 +7898,7 @@ private fun CharacterCard(
                     Spacer(modifier = Modifier.height(1.dp))
                     Text(
                         text = char.author,
-                        color = AppTextMuted,
+                        color = LocalRoleplayColors.current.textSecondary,
                         style = MaterialTheme.typography.bodySmall,
                         fontSize = 10.sp
                     )
@@ -7852,12 +7920,12 @@ private fun CharacterCard(
                     char.tags.take(3).forEach { tag ->
                         Box(
                             modifier = Modifier
-                                .background(AppSurface2, RoundedCornerShape(6.dp))
+                                .background(LocalRoleplayColors.current.surface2, RoundedCornerShape(6.dp))
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
                                 text = tag,
-                                color = AppTextSecondary,
+                                color = LocalRoleplayColors.current.textSecondary,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontSize = 9.sp
                             )
@@ -7890,9 +7958,9 @@ private fun RoleplayActionSheet(
         contentAlignment = Alignment.BottomCenter
     ) {
         Surface(
-            color = AppSurface,
+            color = LocalRoleplayColors.current.surface,
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            border = BorderStroke(1.dp, AppStroke),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
             shadowElevation = 18.dp,
             modifier = Modifier
                 .fillMaxWidth()
@@ -7913,38 +7981,68 @@ private fun RoleplayActionSheet(
                         .width(42.dp)
                         .height(4.dp)
                         .clip(RoundedCornerShape(999.dp))
-                        .background(AppStroke)
+                        .background(LocalRoleplayColors.current.stroke)
                 )
                 Text(
                     text = session.displayTitle(),
-                    color = AppTextPrimary,
+                    color = LocalRoleplayColors.current.textPrimary,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 18.dp, bottom = 10.dp)
                 )
-                ActionSheetRow(
+                RoleplayActionSheetRow(
                     icon = Icons.Rounded.Upload,
                     label = stringResource(R.string.action_export_session),
                     onClick = onExport
                 )
-                ActionSheetRow(
+                RoleplayActionSheetRow(
                     icon = Icons.Rounded.ContentCopy,
                     label = stringResource(R.string.action_clone_config),
                     onClick = onCloneConfig
                 )
-                ActionSheetRow(
+                RoleplayActionSheetRow(
                     icon = Icons.Rounded.ContentCopy,
                     label = stringResource(R.string.action_clone_session),
                     onClick = onCloneSession
                 )
-                ActionSheetRow(
+                RoleplayActionSheetRow(
                     icon = Icons.Rounded.DeleteOutline,
                     label = stringResource(R.string.action_delete),
                     onClick = onDelete
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun RoleplayActionSheetRow(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = LocalRoleplayColors.current.actionAccent,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = label,
+            color = LocalRoleplayColors.current.textPrimary,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 
@@ -7965,13 +8063,13 @@ private fun ChatsScreen(
         Text(
             text = stringResource(R.string.active_chats),
             style = MaterialTheme.typography.titleLarge,
-            color = AppTextPrimary,
+            color = LocalRoleplayColors.current.textPrimary,
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
         if (viewModel.sessions.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.no_active_chats), color = AppTextSecondary)
+                Text(stringResource(R.string.no_active_chats), color = LocalRoleplayColors.current.textSecondary)
             }
         } else {
             LazyColumn(
@@ -7981,9 +8079,9 @@ private fun ChatsScreen(
                 items(viewModel.sessions) { session ->
                     val selected = session.id == viewModel.activeSessionId
                     Surface(
-                        color = if (selected) AppAccentDim.copy(alpha = 0.6f) else AppSurface,
+                        color = if (selected) LocalRoleplayColors.current.accentSoft.copy(alpha = 0.6f) else LocalRoleplayColors.current.surface,
                         shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, if (selected) AppAccent.copy(alpha = 0.6f) else AppStroke),
+                        border = BorderStroke(1.dp, if (selected) LocalRoleplayColors.current.accent.copy(alpha = 0.6f) else LocalRoleplayColors.current.stroke),
                         modifier = Modifier
                             .fillMaxWidth()
                             .combinedClickable(
@@ -8002,7 +8100,7 @@ private fun ChatsScreen(
                                 modifier = Modifier
                                     .size(48.dp)
                                     .clip(CircleShape)
-                                    .background(Brush.linearGradient(listOf(Color(0xFFFF5D8F), Color(0xFF8B5CF6)))),
+                                    .background(Brush.linearGradient(listOf(LocalRoleplayColors.current.accent, Color(0xFF8B5CF6)))),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (session.persona.avatarUri != null) {
@@ -8030,14 +8128,14 @@ private fun ChatsScreen(
                                 ) {
                                     Text(
                                         text = session.persona.displayName.ifBlank { "New Persona" },
-                                        color = AppTextPrimary,
+                                        color = LocalRoleplayColors.current.textPrimary,
                                         style = MaterialTheme.typography.labelLarge,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = session.updatedAt,
-                                        color = AppTextMuted,
+                                        color = LocalRoleplayColors.current.textSecondary,
                                         style = MaterialTheme.typography.bodySmall,
                                         fontSize = 11.sp
                                     )
@@ -8054,7 +8152,7 @@ private fun ChatsScreen(
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = session.preview,
-                                    color = AppTextSecondary,
+                                    color = LocalRoleplayColors.current.textSecondary,
                                     style = MaterialTheme.typography.bodyMedium,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -8143,11 +8241,11 @@ private fun CreateScreen(
             Text(
                 text = stringResource(R.string.create_character_title),
                 style = MaterialTheme.typography.titleLarge,
-                color = AppTextPrimary
+                color = LocalRoleplayColors.current.textPrimary
             )
             TextButton(
                 onClick = { showAutoFill = true },
-                colors = ButtonDefaults.textButtonColors(contentColor = AppAccent)
+                colors = ButtonDefaults.textButtonColors(contentColor = LocalRoleplayColors.current.accent)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.AutoAwesome,
@@ -8176,10 +8274,10 @@ private fun CreateScreen(
                         .clip(CircleShape)
                         .background(
                             Brush.radialGradient(
-                                colors = listOf(AppAccentSoft.copy(alpha = 0.45f), AppSurface2)
+                                colors = listOf(LocalRoleplayColors.current.accentSoft.copy(alpha = 0.45f), LocalRoleplayColors.current.surface2)
                             )
                         )
-                        .border(2.dp, AppAccentSoft, CircleShape)
+                        .border(2.dp, LocalRoleplayColors.current.accentSoft, CircleShape)
                         .padding(3.dp)
                 ) {
                     Avatar(
@@ -8194,13 +8292,13 @@ private fun CreateScreen(
                         .offset(x = 2.dp, y = 2.dp)
                         .size(36.dp)
                         .clip(CircleShape)
-                        .background(AppSurface2)
-                        .border(1.dp, AppStroke, CircleShape)
+                        .background(LocalRoleplayColors.current.surface2)
+                        .border(1.dp, LocalRoleplayColors.current.stroke, CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Upload,
                         contentDescription = "Upload avatar",
-                        tint = AppAccentSoft,
+                        tint = LocalRoleplayColors.current.accentSoft,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -8211,7 +8309,7 @@ private fun CreateScreen(
             value = name,
             onValueChange = { name = it },
             label = { Text(stringResource(R.string.character_name_label)) },
-            textStyle = TextStyle(color = AppTextPrimary),
+            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
         )
@@ -8220,13 +8318,13 @@ private fun CreateScreen(
             value = tagline,
             onValueChange = { tagline = it },
             label = { Text(stringResource(R.string.character_tagline_label)) },
-            textStyle = TextStyle(color = AppTextPrimary),
+            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
         )
 
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-            Text(stringResource(R.string.tags_traits_label), color = AppTextPrimary, style = MaterialTheme.typography.labelLarge)
+            Text(stringResource(R.string.tags_traits_label), color = LocalRoleplayColors.current.textPrimary, style = MaterialTheme.typography.labelLarge)
             Spacer(modifier = Modifier.height(8.dp))
             if (selectedTags.isNotEmpty()) {
                 FlowRow(
@@ -8236,9 +8334,9 @@ private fun CreateScreen(
                 ) {
                     selectedTags.forEach { tag ->
                         Surface(
-                            color = Color(0xFFFF5D8F).copy(alpha = 0.15f),
+                            color = LocalRoleplayColors.current.accent.copy(alpha = 0.15f),
                             shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, Color(0xFFFF5D8F).copy(alpha = 0.4f))
+                            border = BorderStroke(1.dp, LocalRoleplayColors.current.accent.copy(alpha = 0.4f))
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -8261,14 +8359,14 @@ private fun CreateScreen(
             }
             Button(
                 onClick = { showTagPicker = true },
-                colors = ButtonDefaults.buttonColors(containerColor = AppSurface),
+                colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.surface),
                 shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, AppStroke),
+                border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(Icons.Rounded.Add, contentDescription = null, tint = AppTextSecondary)
+                Icon(Icons.Rounded.Add, contentDescription = null, tint = LocalRoleplayColors.current.textSecondary)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.add_tags), color = AppTextSecondary)
+                Text(stringResource(R.string.add_tags), color = LocalRoleplayColors.current.textSecondary)
             }
         }
 
@@ -8276,7 +8374,7 @@ private fun CreateScreen(
             value = prompt,
             onValueChange = { prompt = it },
             label = { Text(stringResource(R.string.system_prompt_label)) },
-            textStyle = TextStyle(color = AppTextPrimary),
+            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
             shape = RoundedCornerShape(12.dp),
             minLines = 4,
             maxLines = 8,
@@ -8287,7 +8385,7 @@ private fun CreateScreen(
             value = greeting,
             onValueChange = { greeting = it },
             label = { Text(stringResource(R.string.greeting_label)) },
-            textStyle = TextStyle(color = AppTextPrimary),
+            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
             shape = RoundedCornerShape(12.dp),
             minLines = 3,
             maxLines = 6,
@@ -8298,12 +8396,12 @@ private fun CreateScreen(
             value = storyLore,
             onValueChange = { storyLore = it.take(16000) },
             label = { Text(stringResource(R.string.lorebook_label)) },
-            textStyle = TextStyle(color = AppTextPrimary),
+            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
             shape = RoundedCornerShape(12.dp),
             minLines = 4,
             maxLines = 8,
             supportingText = {
-                Text(stringResource(R.string.lorebook_counter, storyLore.length), color = AppTextMuted)
+                Text(stringResource(R.string.lorebook_counter, storyLore.length), color = LocalRoleplayColors.current.textSecondary)
             },
             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
         )
@@ -8332,7 +8430,7 @@ private fun CreateScreen(
                     onCreated()
                 }
             },
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5D8F)),
+            colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.accent),
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
@@ -8347,9 +8445,9 @@ private fun CreateScreen(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            HorizontalDivider(modifier = Modifier.weight(1f), color = AppStroke)
-            Text(stringResource(R.string.or_import), color = AppTextMuted, style = MaterialTheme.typography.bodySmall)
-            HorizontalDivider(modifier = Modifier.weight(1f), color = AppStroke)
+            HorizontalDivider(modifier = Modifier.weight(1f), color = LocalRoleplayColors.current.stroke)
+            Text(stringResource(R.string.or_import), color = LocalRoleplayColors.current.textSecondary, style = MaterialTheme.typography.bodySmall)
+            HorizontalDivider(modifier = Modifier.weight(1f), color = LocalRoleplayColors.current.stroke)
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8357,14 +8455,14 @@ private fun CreateScreen(
         OutlinedButton(
             onClick = onImportSession,
             shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, AppStroke),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(50.dp)
         ) {
-            Icon(Icons.Rounded.FileOpen, contentDescription = null, tint = AppAccentSoft)
+            Icon(Icons.Rounded.FileOpen, contentDescription = null, tint = LocalRoleplayColors.current.accentSoft)
             Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.import_session_btn), color = AppTextPrimary)
+            Text(stringResource(R.string.import_session_btn), color = LocalRoleplayColors.current.textPrimary)
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -8372,14 +8470,14 @@ private fun CreateScreen(
         OutlinedButton(
             onClick = onImportConfig,
             shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, AppStroke),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(50.dp)
         ) {
-            Icon(Icons.Rounded.FileOpen, contentDescription = null, tint = AppAccentSoft)
+            Icon(Icons.Rounded.FileOpen, contentDescription = null, tint = LocalRoleplayColors.current.accentSoft)
             Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.import_config_btn), color = AppTextPrimary)
+            Text(stringResource(R.string.import_config_btn), color = LocalRoleplayColors.current.textPrimary)
         }
     }
 
@@ -8525,8 +8623,8 @@ private fun TagPickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = AppSurface,
-        title = { Text(stringResource(R.string.add_tags), color = AppTextPrimary) },
+        containerColor = LocalRoleplayColors.current.surface,
+        title = { Text(stringResource(R.string.add_tags), color = LocalRoleplayColors.current.textPrimary) },
         text = {
             Column(
                 modifier = Modifier
@@ -8536,10 +8634,10 @@ private fun TagPickerDialog(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = { Text(stringResource(R.string.search_tags_hint), color = AppTextMuted) },
-                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, tint = AppTextSecondary) },
+                    placeholder = { Text(stringResource(R.string.search_tags_hint), color = LocalRoleplayColors.current.textSecondary) },
+                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, tint = LocalRoleplayColors.current.textSecondary) },
                     singleLine = true,
-                    textStyle = TextStyle(color = AppTextPrimary),
+                    textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -8556,7 +8654,7 @@ private fun TagPickerDialog(
                             item(key = category) {
                                 Text(
                                     text = localizedTagCategory(category),
-                                    color = AppTextPrimary,
+                                    color = LocalRoleplayColors.current.textPrimary,
                                     style = MaterialTheme.typography.labelLarge,
                                     modifier = Modifier.padding(bottom = 8.dp)
                                 )
@@ -8567,16 +8665,16 @@ private fun TagPickerDialog(
                                     filteredTags.forEach { tag ->
                                         val selected = tag in draftTags
                                         Surface(
-                                            color = if (selected) Color(0xFFFF5D8F) else AppSurface2,
+                                            color = if (selected) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.surface2,
                                             shape = RoundedCornerShape(14.dp),
-                                            border = if (selected) null else BorderStroke(1.dp, AppStroke),
+                                            border = if (selected) null else BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
                                             modifier = Modifier.clickable {
                                                 draftTags = if (selected) draftTags - tag else draftTags + tag
                                             }
                                         ) {
                                             Text(
                                                 text = tag,
-                                                color = if (selected) Color.White else AppTextSecondary,
+                                                color = if (selected) Color.White else LocalRoleplayColors.current.textSecondary,
                                                 style = MaterialTheme.typography.bodySmall,
                                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
                                             )
@@ -8591,19 +8689,291 @@ private fun TagPickerDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(draftTags.distinct()) }) {
-                Text(stringResource(R.string.btn_done), color = AppAccent)
+                Text(stringResource(R.string.btn_done), color = LocalRoleplayColors.current.accent)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.btn_cancel), color = AppTextSecondary)
+                Text(stringResource(R.string.btn_cancel), color = LocalRoleplayColors.current.textSecondary)
             }
         }
     )
 }
 
 @Composable
+private fun RoleplayLanguagePickerSection(
+    languageCode: String,
+    onLanguageChange: (String) -> Unit
+) {
+    Surface(
+        color = LocalRoleplayColors.current.surface,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.language_label),
+                color = LocalRoleplayColors.current.textPrimary,
+                style = MaterialTheme.typography.labelLarge
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val isEn = languageCode != "vi"
+                Surface(
+                    color = if (isEn) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.surface2,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onLanguageChange("en") }
+                ) {
+                    Text(
+                        text = stringResource(R.string.lang_english),
+                        textAlign = TextAlign.Center,
+                        color = if (isEn) Color.White else LocalRoleplayColors.current.textSecondary,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+                Surface(
+                    color = if (!isEn) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.surface2,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onLanguageChange("vi") }
+                ) {
+                    Text(
+                        text = stringResource(R.string.lang_vietnamese),
+                        textAlign = TextAlign.Center,
+                        color = if (!isEn) Color.White else LocalRoleplayColors.current.textSecondary,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UserProfileScreen(
+    viewModel: ChatViewModel,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val isVi = viewModel.languageCode == "vi"
+    var name by remember(viewModel.userProfileName) { mutableStateOf(viewModel.userProfileName) }
+    var gender by remember(viewModel.userProfileGender) { mutableStateOf(viewModel.userProfileGender) }
+    var bio by remember(viewModel.globalMemoryBlock) { mutableStateOf(viewModel.globalMemoryBlock) }
+    var avatarUri by remember(viewModel.userProfileAvatarUri) { mutableStateOf(viewModel.userProfileAvatarUri) }
+    val title = if (isVi) "H\u1ed3 s\u01a1 c\u1ee7a t\u00f4i" else "My Profile"
+    val nameLabel = if (isVi) "T\u00ean" else "Name"
+    val genderLabel = if (isVi) "Gi\u1edbi t\u00ednh" else "Gender"
+    val bioLabel = if (isVi) "Ti\u1ec3u s\u1eed" else "Bio"
+    val avatarLabel = if (isVi) "T\u1ea3i \u1ea3nh \u0111\u1ea1i di\u1ec7n" else "Upload avatar"
+    val saveLabel = if (isVi) "L\u01b0u" else "Save"
+    val savedLabel = if (isVi) "\u0110\u00e3 l\u01b0u" else "Saved"
+    val genderOptions = if (isVi) {
+        listOf("female" to "N\u1eef", "male" to "Nam", "other" to "Kh\u00e1c")
+    } else {
+        listOf("female" to "Female", "male" to "Male", "other" to "Other")
+    }
+    val avatarPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+        onResult = { uri ->
+            if (uri != null) {
+                runCatching {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                }
+                avatarUri = uri
+                viewModel.updateUserProfileAvatar(uri)
+            }
+        }
+    )
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = LocalRoleplayColors.current.textPrimary,
+        unfocusedTextColor = LocalRoleplayColors.current.textPrimary,
+        focusedBorderColor = LocalRoleplayColors.current.accent,
+        unfocusedBorderColor = LocalRoleplayColors.current.stroke,
+        cursorColor = LocalRoleplayColors.current.accent,
+        focusedContainerColor = LocalRoleplayColors.current.surface,
+        unfocusedContainerColor = LocalRoleplayColors.current.surface
+    )
+
+    BackHandler(onBack = onBack)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(LocalRoleplayColors.current.background)
+            .statusBarsPadding()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 24.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = "Back",
+                    tint = LocalRoleplayColors.current.textPrimary
+                )
+            }
+            Text(
+                text = title,
+                color = LocalRoleplayColors.current.textPrimary,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .size(116.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        listOf(
+                            LocalRoleplayColors.current.accentSoft.copy(alpha = 0.55f),
+                            LocalRoleplayColors.current.surface2
+                        )
+                    )
+                )
+                .border(2.dp, LocalRoleplayColors.current.accent, CircleShape)
+                .clickable { avatarPicker.launch(arrayOf("image/*")) },
+            contentAlignment = Alignment.Center
+        ) {
+            if (avatarUri != null) {
+                Image(
+                    painter = rememberAsyncImagePainter(avatarUri),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.Person,
+                    contentDescription = null,
+                    tint = LocalRoleplayColors.current.accent,
+                    modifier = Modifier.size(54.dp)
+                )
+            }
+        }
+        TextButton(
+            onClick = { avatarPicker.launch(arrayOf("image/*")) },
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        ) {
+            Text(text = avatarLabel, color = LocalRoleplayColors.current.accent)
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it.take(120) },
+            label = { Text(nameLabel) },
+            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
+            colors = fieldColors,
+            shape = RoundedCornerShape(14.dp),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        Text(
+            text = genderLabel,
+            color = LocalRoleplayColors.current.textPrimary,
+            style = MaterialTheme.typography.labelLarge
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            genderOptions.forEach { (id, label) ->
+                val selected = gender == id
+                Surface(
+                    color = if (selected) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.surface2,
+                    shape = RoundedCornerShape(999.dp),
+                    border = BorderStroke(1.dp, if (selected) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.stroke),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
+                        .clickable { gender = id }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = label,
+                            color = if (selected) Color.White else LocalRoleplayColors.current.textSecondary,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        OutlinedTextField(
+            value = bio,
+            onValueChange = { bio = it.take(64_000) },
+            label = { Text(bioLabel) },
+            supportingText = {
+                Text(
+                    text = "${bio.length} / 64,000",
+                    color = LocalRoleplayColors.current.textSecondary
+                )
+            },
+            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
+            colors = fieldColors,
+            shape = RoundedCornerShape(14.dp),
+            minLines = 7,
+            maxLines = 12,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(LocalRoleplayColors.current.buttonCyan, LocalRoleplayColors.current.accentSoft)
+                    )
+                )
+                .clickable {
+                    viewModel.updateUserProfileName(name)
+                    viewModel.updateUserProfileGender(gender)
+                    viewModel.updateUserProfileAvatar(avatarUri)
+                    viewModel.updateGlobalMemoryBlock(bio)
+                    android.widget.Toast.makeText(context, savedLabel, android.widget.Toast.LENGTH_SHORT).show()
+                    onBack()
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(saveLabel, color = Color.Black, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+@Composable
 private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
+    var showProfileScreen by remember { mutableStateOf(false) }
+
+    if (showProfileScreen) {
+        UserProfileScreen(
+            viewModel = viewModel,
+            onBack = { showProfileScreen = false }
+        )
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -8613,11 +8983,48 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
         Text(
             text = stringResource(R.string.nav_settings),
             style = MaterialTheme.typography.titleLarge,
-            color = AppTextPrimary,
+            color = LocalRoleplayColors.current.textPrimary,
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        LanguagePickerSection(
+        Surface(
+            color = LocalRoleplayColors.current.surface,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp)
+                .clickable { showProfileScreen = true }
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Person,
+                    contentDescription = null,
+                    tint = LocalRoleplayColors.current.accent,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Hồ sơ của tôi / My Profile",
+                        color = LocalRoleplayColors.current.textPrimary,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Text(
+                        text = viewModel.userProfileName.ifBlank { "Name, gender, and shared bio" },
+                        color = LocalRoleplayColors.current.textSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 3.dp)
+                    )
+                }
+                Text(">", color = LocalRoleplayColors.current.textSecondary, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        RoleplayLanguagePickerSection(
             languageCode = viewModel.languageCode,
             onLanguageChange = viewModel::updateLanguage
         )
@@ -8625,9 +9032,38 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
         Spacer(modifier = Modifier.height(12.dp))
 
         Surface(
-            color = AppSurface,
+            color = LocalRoleplayColors.current.surface,
             shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, AppStroke),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Light Mode",
+                            color = LocalRoleplayColors.current.textPrimary,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Text(
+                            text = "Soft pastel theme for RoleplayUI.",
+                            color = LocalRoleplayColors.current.textSecondary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(top = 3.dp)
+                        )
+                    }
+                    Switch(
+                        checked = viewModel.roleplayLightModeEnabled,
+                        onCheckedChange = { viewModel.updateRoleplayLightModeEnabled(it) }
+                    )
+                }
+            }
+        }
+
+        Surface(
+            color = LocalRoleplayColors.current.surface,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -8635,12 +9071,12 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = stringResource(R.string.roleplay_ui_mode),
-                            color = AppTextPrimary,
+                            color = LocalRoleplayColors.current.textPrimary,
                             style = MaterialTheme.typography.labelLarge
                         )
                         Text(
                             text = if (viewModel.roleplayUiModeEnabled) stringResource(R.string.roleplay_ui_mode_active) else stringResource(R.string.roleplay_ui_mode_inactive),
-                            color = AppTextSecondary,
+                            color = LocalRoleplayColors.current.textSecondary,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(top = 3.dp)
                         )
@@ -8654,9 +9090,9 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
         }
 
         Surface(
-            color = AppSurface,
+            color = LocalRoleplayColors.current.surface,
             shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, AppStroke),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -8664,12 +9100,12 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = stringResource(R.string.nsfw_mode),
-                            color = AppTextPrimary,
+                            color = LocalRoleplayColors.current.textPrimary,
                             style = MaterialTheme.typography.labelLarge
                         )
                         Text(
                             text = if (viewModel.nsfwModeEnabled) stringResource(R.string.nsfw_mode_active) else stringResource(R.string.nsfw_mode_inactive),
-                            color = AppTextSecondary,
+                            color = LocalRoleplayColors.current.textSecondary,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(top = 3.dp)
                         )
@@ -8683,9 +9119,9 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
         }
 
         Surface(
-            color = AppSurface,
+            color = LocalRoleplayColors.current.surface,
             shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, AppStroke),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -8693,12 +9129,12 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Relationship XP",
-                            color = AppTextPrimary,
+                            color = LocalRoleplayColors.current.textPrimary,
                             style = MaterialTheme.typography.labelLarge
                         )
                         Text(
                             text = if (viewModel.levelSystemEnabled) stringResource(R.string.relationship_xp_active) else stringResource(R.string.relationship_xp_inactive),
-                            color = AppTextSecondary,
+                            color = LocalRoleplayColors.current.textSecondary,
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(top = 3.dp)
                         )
@@ -8713,13 +9149,64 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
 
         Button(
             onClick = { viewModel.openAppSettings() },
-            colors = ButtonDefaults.buttonColors(containerColor = AppAccent),
+            colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.accent),
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(50.dp)
         ) {
             Text(stringResource(R.string.open_app_settings), color = Color.White, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        val updateState = viewModel.appUpdateState
+        val updateButtonEnabled = updateState !is AppUpdateState.Checking &&
+            updateState !is AppUpdateState.Downloading &&
+            updateState !is AppUpdateState.Installing &&
+            updateState !is AppUpdateState.UpToDate
+        Button(
+            onClick = {
+                when (updateState) {
+                    is AppUpdateState.UpdateAvailable -> viewModel.downloadAndInstallUpdate()
+                    else -> viewModel.checkForUpdates()
+                }
+            },
+            enabled = updateButtonEnabled,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFFEDAA00),
+                contentColor = Color.Black,
+                disabledContainerColor = Color(0xFFEDAA00).copy(alpha = 0.55f),
+                disabledContentColor = Color.Black.copy(alpha = 0.75f)
+            ),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+        ) {
+            if (updateState is AppUpdateState.Checking || updateState is AppUpdateState.Downloading) {
+                CircularProgressIndicator(
+                    color = Color.Black,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+            Text(
+                text = when (updateState) {
+                    AppUpdateState.Idle -> "Update App"
+                    AppUpdateState.Checking -> "Checking..."
+                    AppUpdateState.UpToDate -> "Up to date"
+                    AppUpdateState.Installing -> "Opening installer..."
+                    is AppUpdateState.UpdateAvailable -> "Download v${updateState.versionName}"
+                    is AppUpdateState.Downloading -> "Downloading ${updateState.progressPercent}%"
+                    is AppUpdateState.Error -> updateState.message.ifBlank { "Try Update Again" }
+                },
+                color = Color.Black,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

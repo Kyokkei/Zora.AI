@@ -18,6 +18,7 @@ import android.os.Environment
 import android.os.Build
 import android.os.LocaleList
 import android.provider.DocumentsContract
+import android.provider.Settings
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +46,7 @@ import com.yozora.aichat.data.remote.GeminiToolPlan
 import com.yozora.aichat.data.remote.Rule34ImageRepository
 import com.yozora.aichat.data.remote.ScreenShareForegroundService
 import com.yozora.aichat.data.remote.TavilyRepository
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,6 +59,8 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -181,8 +185,7 @@ enum class AppIconChoice(
     val id: String,
     val label: String
 ) {
-    Minimalist("minimalist", "Minimalist"),
-    Waifu("waifu", "Waifu")
+    Minimalist("minimalist", "Minimalist")
 }
 
 enum class AppNameChoice(
@@ -191,6 +194,19 @@ enum class AppNameChoice(
 ) {
     Zora("zora", "Zora.AI"),
     SanLoVerse("sanloverse", "SanLoVerse (SLV)")
+}
+
+sealed interface AppUpdateState {
+    data object Idle : AppUpdateState
+    data object Checking : AppUpdateState
+    data object UpToDate : AppUpdateState
+    data object Installing : AppUpdateState
+    data class UpdateAvailable(
+        val versionName: String,
+        val downloadUrl: String
+    ) : AppUpdateState
+    data class Downloading(val progressPercent: Int) : AppUpdateState
+    data class Error(val message: String) : AppUpdateState
 }
 
 enum class GeminiLiveVoice(
@@ -369,11 +385,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val appNameChoiceKey = stringPreferencesKey("app_name_choice")
     private val geminiLiveVoiceKey = stringPreferencesKey("gemini_live_voice")
     private val globalMemoryKey = stringPreferencesKey("global_memory_block_v1")
+    private val userProfileNameKey = stringPreferencesKey("user_profile_name_v1")
+    private val userProfileGenderKey = stringPreferencesKey("user_profile_gender_v1")
+    private val userProfileAvatarUriKey = stringPreferencesKey("user_profile_avatar_uri_v1")
     private val exportDefaultFolderUriKey = stringPreferencesKey("export_default_folder_uri")
     private val languageCodeKey = stringPreferencesKey("language_code")
     private val nsfwModeEnabledKey = booleanPreferencesKey("nsfw_mode_enabled_v1")
     private val summarizerSeparateKeyKey = booleanPreferencesKey("summarizer_use_separate_key")
     private val roleplayUiModeEnabledKey = booleanPreferencesKey("roleplay_ui_mode_enabled_v2")
+    private val roleplayLightModeKey = booleanPreferencesKey("roleplay_light_mode_enabled_v1")
     private val levelSystemMigratedKey = booleanPreferencesKey("level_system_migrated_v1")
     private var restoringState = false
     private val persistMutex = Mutex()
@@ -408,6 +428,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         private set
 
     var appSettingsVisible by mutableStateOf(false)
+        private set
+
+    var appUpdateState by mutableStateOf<AppUpdateState>(AppUpdateState.Idle)
         private set
 
     var apiKeyDraft by mutableStateOf("")
@@ -508,10 +531,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     var globalMemoryBlock by mutableStateOf("")
         private set
 
+    var userProfileName by mutableStateOf("")
+        private set
+
+    var userProfileGender by mutableStateOf("other")
+        private set
+
+    var userProfileAvatarUri by mutableStateOf<Uri?>(null)
+        private set
+
     var nsfwModeEnabled by mutableStateOf(true)
         private set
 
     var roleplayUiModeEnabled by mutableStateOf(false)
+        private set
+
+    var roleplayLightModeEnabled by mutableStateOf(false)
         private set
 
     var languageCode by mutableStateOf("en")
@@ -626,6 +661,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            cleanupDownloadedUpdateApks(getApplication())
+        }
         viewModelScope.launch {
             restoreProjects()
             restoreChatState()
@@ -639,11 +677,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             settingsDataStore.data.collectLatest { preferences ->
                 globalMemoryBlock = preferences[globalMemoryKey].orEmpty()
+                userProfileName = preferences[userProfileNameKey].orEmpty()
+                userProfileGender = preferences[userProfileGenderKey] ?: "other"
+                userProfileAvatarUri = preferences[userProfileAvatarUriKey]?.let(Uri::parse)
                 val restoredNsfw = preferences[nsfwModeEnabledKey] ?: true
                 nsfwModeEnabled = restoredNsfw
                 nsfwModeEnabledValue = restoredNsfw
                 summarizerUsesSeparateKey = preferences[summarizerSeparateKeyKey] ?: false
                 roleplayUiModeEnabled = preferences[roleplayUiModeEnabledKey] ?: false
+                roleplayLightModeEnabled = preferences[roleplayLightModeKey] ?: false
                 languageCode = preferences[languageCodeKey] ?: "en"
             }
         }
@@ -2911,12 +2953,57 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateUserProfileName(value: String) {
+        val nextName = value.take(120)
+        userProfileName = nextName
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsDataStore.edit { preferences ->
+                preferences[userProfileNameKey] = nextName
+            }
+        }
+    }
+
+    fun updateUserProfileGender(value: String) {
+        val nextGender = when (value) {
+            "female", "male" -> value
+            else -> "other"
+        }
+        userProfileGender = nextGender
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsDataStore.edit { preferences ->
+                preferences[userProfileGenderKey] = nextGender
+            }
+        }
+    }
+
+    fun updateUserProfileAvatar(uri: Uri?) {
+        userProfileAvatarUri = uri
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsDataStore.edit { preferences ->
+                if (uri == null) {
+                    preferences.remove(userProfileAvatarUriKey)
+                } else {
+                    preferences[userProfileAvatarUriKey] = uri.toString()
+                }
+            }
+        }
+    }
+
     fun updateNsfwModeEnabled(value: Boolean) {
         nsfwModeEnabled = value
         nsfwModeEnabledValue = value
         viewModelScope.launch(Dispatchers.IO) {
             settingsDataStore.edit { preferences ->
                 preferences[nsfwModeEnabledKey] = value
+            }
+        }
+    }
+
+    fun updateRoleplayLightModeEnabled(value: Boolean) {
+        roleplayLightModeEnabled = value
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsDataStore.edit { preferences ->
+                preferences[roleplayLightModeKey] = value
             }
         }
     }
@@ -3189,12 +3276,89 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         appSettingsVisible = false
     }
 
+    fun checkForUpdates() {
+        if (appUpdateState is AppUpdateState.Checking ||
+            appUpdateState is AppUpdateState.Downloading ||
+            appUpdateState is AppUpdateState.Installing
+        ) {
+            return
+        }
+        appUpdateState = AppUpdateState.Checking
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val release = fetchLatestGitHubRelease()
+                    val latestVersion = release.optString("tag_name")
+                        .removePrefix("v")
+                        .trim()
+                    if (latestVersion.isBlank()) {
+                        throw IOException("Latest release has no version tag.")
+                    }
+                    val apkAsset = release.findBestZoraApkAsset()
+                        ?: throw IOException("Latest release has no APK asset.")
+                    val currentVersion = getApplication<Application>().currentPackageVersionName()
+                    if (compareVersionNames(latestVersion, currentVersion) > 0) {
+                        AppUpdateState.UpdateAvailable(
+                            versionName = latestVersion,
+                            downloadUrl = apkAsset.getString("browser_download_url")
+                        )
+                    } else {
+                        AppUpdateState.UpToDate
+                    }
+                }
+            }
+            appUpdateState = result.getOrElse { throwable ->
+                AppUpdateState.Error(throwable.message?.take(160) ?: "Update check failed.")
+            }
+        }
+    }
+
+    fun downloadAndInstallUpdate() {
+        val update = appUpdateState as? AppUpdateState.UpdateAvailable ?: return
+        appUpdateState = AppUpdateState.Downloading(0)
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val context = getApplication<Application>()
+                    cleanupDownloadedUpdateApks(context)
+                    val updatesDir = File(context.cacheDir, UPDATE_CACHE_DIR).apply { mkdirs() }
+                    val updateFile = File(updatesDir, "zora-update-${update.versionName.sanitizeFilePart()}.apk")
+                    var lastProgress = -1
+                    downloadApk(update.downloadUrl, updateFile) { progress ->
+                        if (progress != lastProgress) {
+                            lastProgress = progress
+                            viewModelScope.launch {
+                                appUpdateState = AppUpdateState.Downloading(progress)
+                            }
+                        }
+                    }
+                    updateFile
+                }
+            }
+            result
+                .onSuccess { updateFile ->
+                    appUpdateState = AppUpdateState.Installing
+                    runCatching { installDownloadedApk(getApplication(), updateFile) }
+                        .onFailure { throwable ->
+                            appUpdateState = AppUpdateState.Error(
+                                throwable.message?.take(160) ?: "Could not open installer."
+                            )
+                        }
+                }
+                .onFailure { throwable ->
+                    appUpdateState = AppUpdateState.Error(
+                        throwable.message?.take(160) ?: "Download failed."
+                    )
+                }
+        }
+    }
+
     fun updateAppIcon(choice: AppIconChoice) {
-        appIconChoice = choice
+        appIconChoice = AppIconChoice.Minimalist
         applyLauncherChoice(appNameChoice, appIconChoice)
         viewModelScope.launch(Dispatchers.IO) {
             settingsDataStore.edit { preferences ->
-                preferences[appIconChoiceKey] = choice.id
+                preferences[appIconChoiceKey] = AppIconChoice.Minimalist.id
             }
         }
     }
@@ -3285,6 +3449,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         return persona.toEntity(
             id = id,
             memoryBlock = memoryForSession(currentSession),
+            userName = userProfileName,
+            userGender = userProfileGender,
+            userProfileEnabled = currentSession.memoryEnabled,
             projectInstruction = projectInstructionForSession(currentSession),
             storyLore = currentSession.storyLore,
             archivedContext = currentSession.archivedContext,
@@ -3793,7 +3960,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun restoreLauncherChoice() {
         val preferences = settingsDataStore.data.first()
-        val restoredIcon = AppIconChoice.entries.firstOrNull { it.id == preferences[appIconChoiceKey] } ?: AppIconChoice.Minimalist
+        val restoredIcon = AppIconChoice.Minimalist
         val restoredName = AppNameChoice.entries.firstOrNull { it.id == preferences[appNameChoiceKey] } ?: AppNameChoice.Zora
         appIconChoice = restoredIcon
         appNameChoice = restoredName
@@ -3829,11 +3996,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         return when (name) {
             AppNameChoice.Zora -> when (icon) {
                 AppIconChoice.Minimalist -> "MainActivityZoraMinimalistAlias"
-                AppIconChoice.Waifu -> "MainActivityZoraWaifuAlias"
             }
             AppNameChoice.SanLoVerse -> when (icon) {
                 AppIconChoice.Minimalist -> "MainActivitySlvMinimalistAlias"
-                AppIconChoice.Waifu -> "MainActivitySlvWaifuAlias"
             }
         }
     }
@@ -4501,6 +4666,136 @@ private const val MAX_PROJECT_INSTRUCTION_CHARS = 16_000
 private const val MAX_STORY_LORE_CHARS = 16_000
 private const val MAX_LEVEL_XP = 1_500
 private const val XP_PER_TEXT_MESSAGE = 10
+private const val GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/Z0ra-AI/Zora.AI/releases/latest"
+private const val UPDATE_CACHE_DIR = "updates"
+
+private fun cleanupDownloadedUpdateApks(context: Context) {
+    File(context.cacheDir, UPDATE_CACHE_DIR)
+        .listFiles { file -> file.isFile && file.extension.equals("apk", ignoreCase = true) }
+        ?.forEach { file -> runCatching { file.delete() } }
+}
+
+private fun fetchLatestGitHubRelease(): JSONObject {
+    val connection = (URL(GITHUB_LATEST_RELEASE_URL).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 15_000
+        readTimeout = 20_000
+        setRequestProperty("Accept", "application/vnd.github+json")
+        setRequestProperty("User-Agent", "Zora.AI-Android-Updater")
+    }
+    return try {
+        if (connection.responseCode !in 200..299) {
+            val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            throw IOException("GitHub update check failed: ${connection.responseCode} ${errorBody.take(80)}")
+        }
+        JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun JSONObject.findBestZoraApkAsset(): JSONObject? {
+    val assets = optJSONArray("assets") ?: return null
+    val apkAssets = buildList {
+        for (index in 0 until assets.length()) {
+            val asset = assets.optJSONObject(index) ?: continue
+            val name = asset.optString("name")
+            val url = asset.optString("browser_download_url")
+            if (name.endsWith(".apk", ignoreCase = true) && url.isNotBlank()) {
+                add(asset)
+            }
+        }
+    }
+    return apkAssets.firstOrNull { asset ->
+        asset.optString("name").contains("zora", ignoreCase = true)
+    } ?: apkAssets.firstOrNull()
+}
+
+private fun Context.currentPackageVersionName(): String {
+    return packageManager.getPackageInfo(packageName, 0).versionName ?: "0"
+}
+
+private fun compareVersionNames(left: String, right: String): Int {
+    val leftParts = left.versionParts()
+    val rightParts = right.versionParts()
+    val maxSize = maxOf(leftParts.size, rightParts.size)
+    for (index in 0 until maxSize) {
+        val leftPart = leftParts.getOrElse(index) { 0 }
+        val rightPart = rightParts.getOrElse(index) { 0 }
+        if (leftPart != rightPart) return leftPart.compareTo(rightPart)
+    }
+    return 0
+}
+
+private fun String.versionParts(): List<Int> {
+    return trim()
+        .removePrefix("v")
+        .split('.', '-', '_')
+        .mapNotNull { part -> part.takeWhile { it.isDigit() }.toIntOrNull() }
+        .ifEmpty { listOf(0) }
+}
+
+private fun String.sanitizeFilePart(): String {
+    return replace(Regex("[^A-Za-z0-9._-]+"), "-").trim('-', '.', '_').ifBlank { "latest" }
+}
+
+private fun downloadApk(url: String, destination: File, onProgress: (Int) -> Unit) {
+    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 20_000
+        readTimeout = 60_000
+        setRequestProperty("User-Agent", "Zora.AI-Android-Updater")
+    }
+    try {
+        if (connection.responseCode !in 200..299) {
+            throw IOException("APK download failed: ${connection.responseCode}")
+        }
+        val totalBytes = connection.contentLengthLong.takeIf { it > 0L }
+        var downloadedBytes = 0L
+        destination.outputStream().use { output ->
+            connection.inputStream.use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    output.write(buffer, 0, read)
+                    downloadedBytes += read
+                    totalBytes?.let { total ->
+                        onProgress(((downloadedBytes * 100) / total).toInt().coerceIn(0, 100))
+                    }
+                }
+            }
+        }
+        onProgress(100)
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun installDownloadedApk(context: Context, apkFile: File) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+        !context.packageManager.canRequestPackageInstalls()
+    ) {
+        val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+            data = Uri.parse("package:${context.packageName}")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(settingsIntent)
+        throw IOException("Allow install unknown apps, then tap Update App again.")
+    }
+
+    val apkUri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        apkFile
+    )
+    val installIntent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(apkUri, "application/vnd.android.package-archive")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(installIntent)
+}
 
 private val LEVEL_THRESHOLDS = listOf(
     0,
@@ -5096,6 +5391,9 @@ private fun loadMasterPrompt(application: Application, fileName: String): String
 private fun PersonaUiState.toEntity(
     id: String,
     memoryBlock: String? = null,
+    userName: String = "",
+    userGender: String = "other",
+    userProfileEnabled: Boolean = true,
     projectInstruction: String? = null,
     storyLore: String? = null,
     archivedContext: String? = null,
@@ -5103,6 +5401,30 @@ private fun PersonaUiState.toEntity(
 ): PersonaEntity {
     val basePrompt = effectiveInstructionPrompt()
     val promptSections = mutableListOf(basePrompt)
+    val normalizedUserName = userName.trim()
+    val normalizedUserGender = when (userGender) {
+        "female" -> "female"
+        "male" -> "male"
+        else -> "other"
+    }
+    val normalizedMemory = memoryBlock?.trim().orEmpty()
+    if (userProfileEnabled && (normalizedUserName.isNotBlank() || normalizedUserGender != "other" || normalizedMemory.isNotBlank())) {
+        promptSections += buildString {
+            append("User's personal profile:")
+            if (normalizedUserName.isNotBlank()) {
+                append("\nName: ")
+                append(normalizedUserName)
+            }
+            if (normalizedUserGender != "other") {
+                append("\nGender: ")
+                append(normalizedUserGender)
+            }
+            if (normalizedMemory.isNotBlank()) {
+                append("\nAbout: ")
+                append(normalizedMemory)
+            }
+        }
+    }
     if (traits.isNotEmpty()) {
         promptSections += "Your personality traits and roleplay tags:\n${traits.joinToString(", ")}\nEmbody these traits and tags fully in your behavior and responses."
     }
@@ -5114,9 +5436,6 @@ private fun PersonaUiState.toEntity(
     }
     if (!archivedContext.isNullOrBlank()) {
         promptSections += "[Archived Context]\n${ContextTrimPolicy.injectedArchiveSlice(archivedContext)}\n[End Archived Context]"
-    }
-    if (!memoryBlock.isNullOrBlank()) {
-        promptSections += "Global memory shared by the user across sessions. Treat these as stable user facts/preferences unless the current message corrects them:\n${memoryBlock.trim()}"
     }
     if (!levelInstruction.isNullOrBlank()) {
         promptSections += levelInstruction
