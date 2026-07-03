@@ -13,8 +13,8 @@ android {
         applicationId = "com.yozora.aichat"
         minSdk = 26
         targetSdk = 35
-        versionCode = 224
-        versionName = "2.2.2"
+        versionCode = 225
+        versionName = "2.2.3"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -26,13 +26,13 @@ android {
         create("zora") {
             dimension = "brand"
             resValue("string", "app_name", "Zora.AI")
-            resValue("string", "app_version_panel", "Zora.AI v2.2.2")
+            resValue("string", "app_version_panel", "Zora.AI v2.2.3")
         }
         create("slv") {
             dimension = "brand"
             applicationIdSuffix = ".slv"
             resValue("string", "app_name", "SanLoVerse (SLV)")
-            resValue("string", "app_version_panel", "SanLoVerse (SLV) v2.2.2")
+            resValue("string", "app_version_panel", "SanLoVerse (SLV) v2.2.3")
         }
     }
 

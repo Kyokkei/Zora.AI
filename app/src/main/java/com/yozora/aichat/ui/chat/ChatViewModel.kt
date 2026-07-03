@@ -3144,6 +3144,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateUserProfileAvatarFromPicker(uri: Uri?) {
+        if (uri == null) {
+            updateUserProfileAvatar(null)
+            return
+        }
+        userProfileAvatarUri = uri
+        viewModelScope.launch(Dispatchers.IO) {
+            val storedUri = copyUserProfileAvatarIntoAppStorage(uri) ?: uri
+            settingsDataStore.edit { preferences ->
+                preferences[userProfileAvatarUriKey] = storedUri.toString()
+            }
+            withContext(Dispatchers.Main) {
+                userProfileAvatarUri = storedUri
+            }
+        }
+    }
+
     fun updateNsfwModeEnabled(value: Boolean) {
         nsfwModeEnabled = value
         nsfwModeEnabledValue = value
@@ -4286,6 +4303,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val app = getApplication<Application>()
             val directory = File(app.filesDir, "message_images").apply { mkdirs() }
             val file = File(directory, "message_${System.currentTimeMillis()}_${UUID.randomUUID()}.jpg")
+            app.contentResolver.openInputStream(uri)?.use { input ->
+                file.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return@runCatching null
+            Uri.fromFile(file)
+        }.getOrNull()
+    }
+
+    private fun copyUserProfileAvatarIntoAppStorage(uri: Uri): Uri? {
+        return runCatching {
+            val app = getApplication<Application>()
+            val directory = File(app.filesDir, "profile_avatars").apply { mkdirs() }
+            val file = File(directory, "avatar_${System.currentTimeMillis()}_${UUID.randomUUID()}.jpg")
             app.contentResolver.openInputStream(uri)?.use { input ->
                 file.outputStream().use { output ->
                     input.copyTo(output)

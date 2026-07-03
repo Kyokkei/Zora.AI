@@ -235,8 +235,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 
-private const val APP_VERSION_NAME = "2.2.2"
-private const val APP_VERSION_CODE = 224
+private const val APP_VERSION_NAME = "2.2.3"
+private const val APP_VERSION_CODE = 225
 
 private fun Context.applyLanguageOverride(languageCode: String) {
     val locale = Locale.forLanguageTag(if (languageCode == "vi") "vi" else "en")
@@ -9883,17 +9883,11 @@ private fun UserProfileScreen(
         listOf("female" to "Female", "male" to "Male", "other" to "Other")
     }
     val avatarPicker = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent(),
         onResult = { uri ->
             if (uri != null) {
-                runCatching {
-                    context.contentResolver.takePersistableUriPermission(
-                        uri,
-                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    )
-                }
                 avatarUri = uri
-                viewModel.updateUserProfileAvatar(uri)
+                viewModel.updateUserProfileAvatarFromPicker(uri)
             }
         }
     )
@@ -9952,7 +9946,7 @@ private fun UserProfileScreen(
                     )
                 )
                 .border(2.dp, LocalRoleplayColors.current.accent, CircleShape)
-                .clickable { avatarPicker.launch(arrayOf("image/*")) },
+                .clickable { avatarPicker.launch("image/*") },
             contentAlignment = Alignment.Center
         ) {
             if (avatarUri != null) {
@@ -9972,7 +9966,7 @@ private fun UserProfileScreen(
             }
         }
         TextButton(
-            onClick = { avatarPicker.launch(arrayOf("image/*")) },
+            onClick = { avatarPicker.launch("image/*") },
             modifier = Modifier.align(Alignment.CenterHorizontally)
         ) {
             Text(text = avatarLabel, color = LocalRoleplayColors.current.accent)
