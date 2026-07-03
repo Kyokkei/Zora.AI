@@ -68,6 +68,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -236,7 +237,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 
 private const val APP_VERSION_NAME = "2.2.3"
-private const val APP_VERSION_CODE = 225
+private const val APP_VERSION_CODE = 226
 
 private fun Context.applyLanguageOverride(languageCode: String) {
     val locale = Locale.forLanguageTag(if (languageCode == "vi") "vi" else "en")
@@ -441,6 +442,15 @@ fun CompanionChatApp(
                     onAnimeImagePresetChange = viewModel::updateAnimeImagePreset,
                     onOpenImage = { viewedImageUri = it },
                     onMessageLongPress = { actionMessage = it },
+                    onCopyMessage = { message ->
+                        val copyText = message.content.ifBlank {
+                            message.remoteImageUrl ?: message.imageUris.joinToString("\n") { it.toString() }
+                        }
+                        clipboardManager.setText(AnnotatedString(copyText))
+                    },
+                    onEditMessage = viewModel::beginEditMessage,
+                    onRetryMessage = viewModel::retryMessage,
+                    onSpeakMessage = viewModel::speakMessage,
                     onOpenSessions = { activeChatOpen = false },
                     onOpenPersona = viewModel::openPersonaSheet,
                     onOpenVoiceCall = {
@@ -496,6 +506,15 @@ fun CompanionChatApp(
                 onAnimeImagePresetChange = viewModel::updateAnimeImagePreset,
                 onOpenImage = { viewedImageUri = it },
                 onMessageLongPress = { actionMessage = it },
+                onCopyMessage = { message ->
+                    val copyText = message.content.ifBlank {
+                        message.remoteImageUrl ?: message.imageUris.joinToString("\n") { it.toString() }
+                    }
+                    clipboardManager.setText(AnnotatedString(copyText))
+                },
+                onEditMessage = viewModel::beginEditMessage,
+                onRetryMessage = viewModel::retryMessage,
+                onSpeakMessage = viewModel::speakMessage,
                 onOpenSessions = viewModel::openSessionDrawer,
                 onOpenPersona = viewModel::openPersonaSheet,
                 onOpenVoiceCall = {
@@ -839,6 +858,10 @@ private fun ChatScreen(
     onAnimeImagePresetChange: (AnimeImagePreset) -> Unit,
     onOpenImage: (android.net.Uri) -> Unit,
     onMessageLongPress: (ChatMessage) -> Unit,
+    onCopyMessage: (ChatMessage) -> Unit,
+    onEditMessage: (String) -> Unit,
+    onRetryMessage: (String) -> Unit,
+    onSpeakMessage: (ChatMessage) -> Unit,
     onOpenSessions: () -> Unit,
     onOpenPersona: () -> Unit,
     onOpenVoiceCall: () -> Unit,
@@ -846,6 +869,7 @@ private fun ChatScreen(
     isRoleplayMode: Boolean = false
 ) {
     var toolsSheetVisible by remember { mutableStateOf(false) }
+    var inlineActionMessageId by remember { mutableStateOf<String?>(null) }
     var cameraOutputUri by remember { mutableStateOf<android.net.Uri?>(null) }
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -938,6 +962,7 @@ private fun ChatScreen(
             !message.isImageLoading &&
             message.remoteImageUrl == null
     }?.id
+    val displayMessages = remember(messages) { messages.asReversed() }
 
     Box(
         modifier = Modifier
@@ -971,7 +996,7 @@ private fun ChatScreen(
                     .weight(1f)
                     .fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (messages.isEmpty()) {
                     item {
@@ -987,16 +1012,44 @@ private fun ChatScreen(
                             TypingBubble(persona = persona)
                         }
                     }
-                    items(messages.asReversed(), key = { it.id }) { message ->
+                    itemsIndexed(displayMessages, key = { _, message -> message.id }) { index, message ->
+                        val newerMessage = displayMessages.getOrNull(index - 1)
+                        val olderMessage = displayMessages.getOrNull(index + 1)
+                        val sameAsNewer = newerMessage?.sameBubbleActor(message) == true
+                        val sameAsOlder = olderMessage?.sameBubbleActor(message) == true
                         AnimatedMessageBubble(
                             message = message,
                             persona = persona,
                             groupMembers = groupMembers,
+                            showAvatar = !sameAsNewer,
+                            showSpeakerLabel = !sameAsOlder,
+                            compactTop = sameAsOlder,
+                            compactBottom = sameAsNewer,
+                            actionsVisible = inlineActionMessageId == message.id,
                             animateText = message.id == newestTextModelMessageId &&
                                 message.id !in startedTypewriterMessageIds,
                             onTextAnimationStart = { startedTypewriterMessageIds += it },
+                            onClick = {
+                                inlineActionMessageId = if (inlineActionMessageId == message.id) null else message.id
+                            },
                             onOpenImage = onOpenImage,
-                            onMessageLongPress = onMessageLongPress
+                            onMessageLongPress = onMessageLongPress,
+                            onCopy = {
+                                onCopyMessage(message)
+                                inlineActionMessageId = null
+                            },
+                            onEdit = {
+                                onEditMessage(message.id)
+                                inlineActionMessageId = null
+                            },
+                            onRetry = {
+                                onRetryMessage(message.id)
+                                inlineActionMessageId = null
+                            },
+                            onSpeak = {
+                                onSpeakMessage(message)
+                                inlineActionMessageId = null
+                            }
                         )
                     }
                 }
@@ -1046,6 +1099,9 @@ private fun ChatScreen(
                     draft = draft,
                     isSending = isSending,
                     attachedImageUris = attachedImageUris,
+                    webSearchEnabled = webSearchEnabled,
+                    animeImageModeEnabled = animeImageModeEnabled,
+                    animeImagePreset = animeImagePreset,
                     onDraftChange = onDraftChange,
                     onSend = {
                         focusManager.clearFocus()
@@ -1055,6 +1111,7 @@ private fun ChatScreen(
                         focusManager.clearFocus(force = true)
                         toolsSheetVisible = true
                     },
+                    onVoiceInput = onOpenVoiceCall,
                     onRemoveAttachedImage = onRemoveAttachedImage,
                     onOpenImage = onOpenImage
                 )
@@ -1897,7 +1954,7 @@ private fun ChatHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(90.dp)
+            .height(76.dp)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1914,7 +1971,7 @@ private fun ChatHeader(
             avatarScale = sessionHeaderAvatarScale,
             avatarOffsetX = sessionHeaderAvatarOffsetX,
             avatarOffsetY = sessionHeaderAvatarOffsetY,
-            size = 54,
+            size = 48,
             modifier = Modifier.clickable(onClick = onOpenPersona)
         )
         Spacer(modifier = Modifier.width(12.dp))
@@ -3028,15 +3085,31 @@ private fun TypingDot(alpha: Float) {
     )
 }
 
+private fun ChatMessage.sameBubbleActor(other: ChatMessage): Boolean {
+    if (role != other.role) return false
+    if (role == "user") return true
+    return speakerId == other.speakerId && speakerName == other.speakerName
+}
+
 @Composable
 private fun AnimatedMessageBubble(
     message: ChatMessage,
     persona: PersonaUiState,
     groupMembers: List<GroupMember>,
+    showAvatar: Boolean,
+    showSpeakerLabel: Boolean,
+    compactTop: Boolean,
+    compactBottom: Boolean,
+    actionsVisible: Boolean,
     animateText: Boolean,
     onTextAnimationStart: (String) -> Unit,
+    onClick: () -> Unit,
     onOpenImage: (android.net.Uri) -> Unit,
-    onMessageLongPress: (ChatMessage) -> Unit
+    onMessageLongPress: (ChatMessage) -> Unit,
+    onCopy: () -> Unit,
+    onEdit: () -> Unit,
+    onRetry: () -> Unit,
+    onSpeak: () -> Unit
 ) {
     var visible by remember(message.id) { mutableStateOf(false) }
     var displayedContent by remember(message.id) {
@@ -3076,8 +3149,18 @@ private fun AnimatedMessageBubble(
             persona = persona,
             groupMembers = groupMembers,
             displayContent = displayedContent,
+            showAvatar = showAvatar,
+            showSpeakerLabel = showSpeakerLabel,
+            compactTop = compactTop,
+            compactBottom = compactBottom,
+            actionsVisible = actionsVisible,
+            onClick = onClick,
             onOpenImage = onOpenImage,
-            onMessageLongPress = onMessageLongPress
+            onMessageLongPress = onMessageLongPress,
+            onCopy = onCopy,
+            onEdit = onEdit,
+            onRetry = onRetry,
+            onSpeak = onSpeak
         )
     }
 }
@@ -3089,117 +3172,210 @@ private fun MessageBubble(
     persona: PersonaUiState,
     groupMembers: List<GroupMember>,
     displayContent: String = message.content,
+    showAvatar: Boolean,
+    showSpeakerLabel: Boolean,
+    compactTop: Boolean,
+    compactBottom: Boolean,
+    actionsVisible: Boolean,
+    onClick: () -> Unit,
     onOpenImage: (android.net.Uri) -> Unit,
-    onMessageLongPress: (ChatMessage) -> Unit
+    onMessageLongPress: (ChatMessage) -> Unit,
+    onCopy: () -> Unit,
+    onEdit: () -> Unit,
+    onRetry: () -> Unit,
+    onSpeak: () -> Unit
 ) {
     val isUser = message.role == "user"
-    val speakerPersona = if (isUser) {
-        persona
-    } else {
-        groupMembers.firstOrNull { it.id == message.speakerId }?.persona ?: persona
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
-        verticalAlignment = Alignment.Bottom
-    ) {
-        if (!isUser) {
-            Avatar(persona = speakerPersona, size = 40)
-            Spacer(modifier = Modifier.width(10.dp))
-        }
+    val speakerPersona = if (isUser) persona else groupMembers.firstOrNull { it.id == message.speakerId }?.persona ?: persona
+    val topRadius = if (compactTop) 12.dp else 22.dp
+    val bottomRadius = if (compactBottom) 12.dp else 22.dp
 
-        Surface(
-            shape = RoundedCornerShape(
-                topStart = 22.dp,
-                topEnd = 22.dp,
-                bottomStart = if (isUser) 22.dp else 6.dp,
-                bottomEnd = if (isUser) 6.dp else 22.dp
-            ),
-            color = if (isUser) AppAccentDim else AppSurface2,
-            border = if (isUser) BorderStroke(1.dp, AppAccent.copy(alpha = 0.18f)) else BorderStroke(1.dp, AppStroke.copy(alpha = 0.7f)),
-            shadowElevation = 4.dp,
-            modifier = Modifier
-                .fillMaxWidth(0.78f)
-                .combinedClickable(
-                    onClick = {},
-                    onLongClick = { onMessageLongPress(message) }
-                )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.Bottom
         ) {
-            Column(modifier = Modifier.padding(18.dp)) {
-                if (!isUser && groupMembers.size > 1) {
-                    Text(
-                        text = message.speakerName ?: speakerPersona.displayName,
-                        color = AppAccentSoft,
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(bottom = 8.dp)
+            if (!isUser) {
+                if (showAvatar) {
+                    Avatar(persona = speakerPersona, size = 36)
+                } else {
+                    Spacer(modifier = Modifier.size(36.dp))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+
+            Surface(
+                shape = RoundedCornerShape(
+                    topStart = if (isUser) topRadius else if (compactTop) 12.dp else 22.dp,
+                    topEnd = if (isUser) if (compactTop) 12.dp else 22.dp else topRadius,
+                    bottomStart = if (isUser) bottomRadius else if (compactBottom) 12.dp else 6.dp,
+                    bottomEnd = if (isUser) if (compactBottom) 12.dp else 6.dp else bottomRadius
+                ),
+                color = if (isUser) AppAccentDim.copy(alpha = 0.95f) else AppSurface2.copy(alpha = 0.96f),
+                border = if (isUser) {
+                    BorderStroke(1.dp, AppAccent.copy(alpha = 0.2f))
+                } else {
+                    BorderStroke(1.dp, AppStroke.copy(alpha = 0.62f))
+                },
+                shadowElevation = if (compactTop || compactBottom) 1.dp else 3.dp,
+                modifier = Modifier
+                    .fillMaxWidth(if (isUser) 0.82f else 0.9f)
+                    .combinedClickable(
+                        onClick = onClick,
+                        onLongClick = { onMessageLongPress(message) }
                     )
-                }
-                if (message.isImageLoading) {
-                    AnimeImageLoadingCard()
-                }
-                message.remoteImageUrl?.let { imageUrl ->
-                    val imageUri = android.net.Uri.parse(imageUrl)
-                    Image(
-                        painter = rememberAsyncImagePainter(imageUrl),
-                        contentDescription = "Fetched image",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(320.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable { onOpenImage(imageUri) }
-                    )
-                }
-                if (message.imageUris.isNotEmpty()) {
-                    message.imageUris.forEachIndexed { index, uri ->
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                    if (!isUser && groupMembers.size > 1 && showSpeakerLabel) {
+                        Text(
+                            text = message.speakerName ?: speakerPersona.displayName,
+                            color = AppAccentSoft,
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    }
+                    if (message.isImageLoading) {
+                        AnimeImageLoadingCard()
+                    }
+                    message.remoteImageUrl?.let { imageUrl ->
+                        val imageUri = android.net.Uri.parse(imageUrl)
                         Image(
-                            painter = rememberAsyncImagePainter(uri),
-                            contentDescription = "Message image",
+                            painter = rememberAsyncImagePainter(imageUrl),
+                            contentDescription = "Fetched image",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(if (message.imageUris.size == 1) 180.dp else 118.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable { onOpenImage(uri) }
+                                .height(320.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable { onOpenImage(imageUri) }
                         )
-                        if (index != message.imageUris.lastIndex) {
-                            Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    if (message.imageUris.isNotEmpty()) {
+                        message.imageUris.forEachIndexed { index, uri ->
+                            Image(
+                                painter = rememberAsyncImagePainter(uri),
+                                contentDescription = "Message image",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(if (message.imageUris.size == 1) 180.dp else 118.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable { onOpenImage(uri) }
+                            )
+                            if (index != message.imageUris.lastIndex) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                        }
+                        if (displayContent.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(12.dp))
                         }
                     }
-                    if (displayContent.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
-                }
-                val showText = displayContent.isNotBlank() && !message.isImageLoading && message.remoteImageUrl == null
-                if (showText) {
-                    MarkdownContent(
-                        input = displayContent,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = message.time,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = AppTextSecondary.copy(alpha = 0.9f)
-                    )
-                    if (isUser) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Icon(
-                            imageVector = Icons.Rounded.DoneAll,
-                            contentDescription = "Sent",
-                            tint = AppAccentSoft,
-                            modifier = Modifier.size(16.dp)
+                    val showText = displayContent.isNotBlank() && !message.isImageLoading && message.remoteImageUrl == null
+                    if (showText) {
+                        MarkdownContent(
+                            input = displayContent,
+                            modifier = Modifier.fillMaxWidth()
                         )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = message.time,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = AppTextSecondary.copy(alpha = 0.86f)
+                        )
+                        if (isUser) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                imageVector = Icons.Rounded.DoneAll,
+                                contentDescription = "Sent",
+                                tint = AppAccentSoft,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
         }
+        AnimatedVisibility(
+            visible = actionsVisible,
+            enter = fadeIn(animationSpec = tween(120)) + slideInVertically(initialOffsetY = { it / 3 }),
+            exit = fadeOut(animationSpec = tween(100))
+        ) {
+            MessageInlineActions(
+                isUser = isUser,
+                canSpeak = !isUser && message.content.isNotBlank(),
+                modifier = Modifier
+                    .align(if (isUser) Alignment.End else Alignment.Start)
+                    .padding(
+                        start = if (isUser) 0.dp else 44.dp,
+                        top = 6.dp,
+                        end = if (isUser) 4.dp else 0.dp
+                    ),
+                onCopy = onCopy,
+                onEdit = onEdit,
+                onRetry = onRetry,
+                onSpeak = onSpeak
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessageInlineActions(
+    isUser: Boolean,
+    canSpeak: Boolean,
+    modifier: Modifier = Modifier,
+    onCopy: () -> Unit,
+    onEdit: () -> Unit,
+    onRetry: () -> Unit,
+    onSpeak: () -> Unit
+) {
+    Surface(
+        color = AppSurface.copy(alpha = 0.94f),
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, AppStroke.copy(alpha = 0.75f)),
+        shadowElevation = 4.dp,
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            InlineActionIcon(Icons.Rounded.ContentCopy, "Copy", onCopy)
+            if (isUser) {
+                InlineActionIcon(Icons.Rounded.Edit, "Edit", onEdit)
+            }
+            InlineActionIcon(Icons.Rounded.Refresh, if (isUser) "Retry from here" else "Retry response", onRetry)
+            if (canSpeak) {
+                InlineActionIcon(Icons.Rounded.VolumeUp, "Speak", onSpeak)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InlineActionIcon(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.size(34.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = AppTextSecondary,
+            modifier = Modifier.size(18.dp)
+        )
     }
 }
 
@@ -4384,9 +4560,13 @@ private fun ChatInputBar(
     draft: String,
     isSending: Boolean,
     attachedImageUris: List<android.net.Uri>,
+    webSearchEnabled: Boolean,
+    animeImageModeEnabled: Boolean,
+    animeImagePreset: AnimeImagePreset,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onOpenTools: () -> Unit,
+    onVoiceInput: () -> Unit,
     onRemoveAttachedImage: (android.net.Uri) -> Unit,
     onOpenImage: (android.net.Uri) -> Unit
 ) {
@@ -4400,15 +4580,39 @@ private fun ChatInputBar(
             .fillMaxWidth()
             .padding(horizontal = 18.dp, vertical = 6.dp),
         color = AppSurface2,
-        shape = RoundedCornerShape(32.dp),
+        shape = RoundedCornerShape(28.dp),
         border = BorderStroke(1.dp, AppAccent.copy(alpha = 0.42f)),
-        shadowElevation = 8.dp
+        shadowElevation = 6.dp
     ) {
         Column {
+            if (webSearchEnabled || animeImageModeEnabled) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(start = 16.dp, top = 10.dp, end = 16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (webSearchEnabled) {
+                        item {
+                            ActiveToolChip(
+                                icon = Icons.Rounded.Public,
+                                label = "Web search"
+                            )
+                        }
+                    }
+                    if (animeImageModeEnabled) {
+                        item {
+                            ActiveToolChip(
+                                icon = Icons.Rounded.ImageSearch,
+                                label = "Anime image: ${animeImagePreset.label}"
+                            )
+                        }
+                    }
+                }
+            }
             if (attachedImageUris.isNotEmpty()) {
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp),
+                    contentPadding = PaddingValues(start = 16.dp, top = 10.dp, end = 16.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     items(attachedImageUris, key = { it.toString() }) { uri ->
@@ -4422,8 +4626,8 @@ private fun ChatInputBar(
             }
             Row(
                 modifier = Modifier
-                    .heightIn(min = 68.dp, max = 176.dp)
-                    .padding(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 8.dp),
+                    .heightIn(min = 60.dp, max = 164.dp)
+                    .padding(start = 8.dp, top = 7.dp, end = 8.dp, bottom = 7.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
@@ -4431,7 +4635,7 @@ private fun ChatInputBar(
                     shape = CircleShape,
                     border = BorderStroke(1.dp, AppStroke),
                     modifier = Modifier
-                        .size(52.dp)
+                        .size(48.dp)
                         .clickable(onClick = onOpenTools)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -4439,7 +4643,7 @@ private fun ChatInputBar(
                             imageVector = Icons.Rounded.Add,
                             contentDescription = "Open chat tools",
                             tint = AppTextPrimary,
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(26.dp)
                         )
                     }
                 }
@@ -4453,7 +4657,7 @@ private fun ChatInputBar(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 52.dp, max = 150.dp),
+                        .heightIn(min = 48.dp, max = 144.dp),
                     placeholder = {
                         Text(
                             text = placeholder,
@@ -4476,14 +4680,16 @@ private fun ChatInputBar(
                     color = AppSurface,
                     shape = CircleShape,
                     border = BorderStroke(1.dp, AppStroke),
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clickable(onClick = onVoiceInput)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = Icons.Rounded.Mic,
                             contentDescription = "Voice input",
                             tint = AppTextSecondary,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(21.dp)
                         )
                     }
                 }
@@ -4498,7 +4704,7 @@ private fun ChatInputBar(
                     ),
                     shape = CircleShape,
                     modifier = Modifier
-                        .size(52.dp)
+                        .size(48.dp)
                         .scale(sendScale)
                 ) {
                     if (isSending) {
@@ -4516,6 +4722,38 @@ private fun ChatInputBar(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ActiveToolChip(
+    icon: ImageVector,
+    label: String
+) {
+    Surface(
+        color = AppAccent.copy(alpha = 0.16f),
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, AppAccent.copy(alpha = 0.34f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = AppAccentSoft,
+                modifier = Modifier.size(15.dp)
+            )
+            Text(
+                text = label,
+                color = AppAccentSoft,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
