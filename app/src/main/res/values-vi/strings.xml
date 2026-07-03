@@ -13,6 +13,7 @@
     <string name="search_characters">Tìm kiếm nhân vật</string>
     <string name="tag_all">Tất cả</string>
     <string name="no_characters_found">Không tìm thấy nhân vật</string>
+    <string name="no_characters_found_hint">Thử tìm kiếm khác hoặc tạo nhân vật mới.</string>
 
     <!-- === CHATS SCREEN === -->
     <string name="active_chats">Đoạn chat</string>
@@ -22,14 +23,27 @@
 
     <!-- === CREATE SCREEN === -->
     <string name="create_character_title">Tạo nhân vật</string>
+    <string name="create_reset_form">Xóa form</string>
     <string name="ai_autofill">AI tự điền</string>
+    <string name="character_image_section">Ảnh nhân vật</string>
     <string name="character_name_label">Tên nhân vật</string>
+    <string name="character_name_required">Tên*</string>
+    <string name="character_name_placeholder">Đặt tên nhân vật</string>
     <string name="character_tagline_label">Mô tả ngắn (vd: Người bạn cùng phòng tinh nghịch)</string>
+    <string name="short_tagline_label">Mô tả ngắn</string>
+    <string name="short_tagline_placeholder">Dòng xem trước hiển thị trên thẻ</string>
+    <string name="gender_label">Giới tính</string>
+    <string name="gender_male">Nam</string>
+    <string name="gender_female">Nữ</string>
+    <string name="gender_other">Khác</string>
     <string name="tags_traits_label">Tags / Đặc điểm</string>
     <string name="add_tags">Thêm tag</string>
     <string name="system_prompt_label">System Prompt</string>
     <string name="system_prompt_placeholder">vd: Bạn là người bạn cùng phòng tinh nghịch...</string>
     <string name="greeting_label">Tin nhắn chào mở đầu (Tùy chọn)</string>
+    <string name="opening_message_placeholder">Viết tin nhắn đầu tiên nhân vật sẽ gửi.</string>
+    <string name="long_description_label">Mô tả dài*</string>
+    <string name="long_description_placeholder">Mô tả nhân vật là ai, cách nói chuyện, mong muốn và hành vi.</string>
     <string name="lorebook_label">Lorebook / Thế giới quan</string>
     <string name="lorebook_placeholder">Mô tả thế giới và các quy tắc chi phối nó.</string>
     <string name="lorebook_hint">Bối cảnh chung: lịch sử, quy tắc, địa điểm, phe phái.</string>

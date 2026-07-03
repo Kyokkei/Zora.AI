@@ -13,6 +13,7 @@
     <string name="search_characters">Search Characters</string>
     <string name="tag_all">All Tags</string>
     <string name="no_characters_found">No characters found</string>
+    <string name="no_characters_found_hint">Try another search or create a new character.</string>
 
     <!-- === CHATS SCREEN === -->
     <string name="active_chats">Active Chats</string>
@@ -22,14 +23,27 @@
 
     <!-- === CREATE SCREEN === -->
     <string name="create_character_title">Create Character</string>
+    <string name="create_reset_form">Reset form</string>
     <string name="ai_autofill">AI Auto-fill</string>
+    <string name="character_image_section">Character Image</string>
     <string name="character_name_label">Character Name</string>
+    <string name="character_name_required">Name*</string>
+    <string name="character_name_placeholder">Name your character</string>
     <string name="character_tagline_label">Short Tagline (e.g. Teasing roommate)</string>
+    <string name="short_tagline_label">Short Tagline</string>
+    <string name="short_tagline_placeholder">A quick preview shown on the card</string>
+    <string name="gender_label">Gender</string>
+    <string name="gender_male">Male</string>
+    <string name="gender_female">Female</string>
+    <string name="gender_other">Other</string>
     <string name="tags_traits_label">Tags / Traits</string>
     <string name="add_tags">Add Tags</string>
     <string name="system_prompt_label">System Personality Prompt</string>
     <string name="system_prompt_placeholder">e.g. You are a teasing roommate...</string>
     <string name="greeting_label">Initial Greeting Message (Optional)</string>
+    <string name="opening_message_placeholder">Write the first message this character sends.</string>
+    <string name="long_description_label">Long Description*</string>
+    <string name="long_description_placeholder">Describe who this character is, how they speak, what they want, and how they should behave.</string>
     <string name="lorebook_label">Lorebook / Story Lore</string>
     <string name="lorebook_placeholder">Describe the world and the rules that govern it.</string>
     <string name="lorebook_hint">Shared world context: canon, rules, locations, factions.</string>

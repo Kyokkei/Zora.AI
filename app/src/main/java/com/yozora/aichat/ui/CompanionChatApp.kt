@@ -46,6 +46,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -68,6 +69,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -7648,8 +7651,16 @@ private fun DiscoverScreen(
 
     val allCharacters = PresetCharacters + customCharacters
     val tagsList = remember(customCharacters) {
-        val userTags = customCharacters.flatMap { it.tags }.distinct().sorted()
-        listOf("All Tags") + TAG_CATEGORIES.keys + userTags
+        val userTags = customCharacters
+            .flatMap { it.tags }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key.lowercase() })
+            .map { it.key }
+        listOf("All Tags") + userTags
     }
     LaunchedEffect(tagsList) {
         if (selectedTag !in tagsList) {
@@ -7662,9 +7673,6 @@ private fun DiscoverScreen(
                             char.tagline.contains(searchQuery, ignoreCase = true)
         val matchesTag = if (selectedTag == "All Tags") {
             true
-        } else if (selectedTag in TAG_CATEGORIES.keys) {
-            val categoryTags = TAG_CATEGORIES[selectedTag].orEmpty()
-            char.tags.any { it in categoryTags }
         } else {
             char.tags.any { it.equals(selectedTag, ignoreCase = true) }
         }
@@ -7740,7 +7748,6 @@ private fun DiscoverScreen(
                     Text(
                         text = when {
                             tag == "All Tags" -> stringResource(R.string.tag_all)
-                            tag in TAG_CATEGORIES.keys -> localizedTagCategory(tag)
                             else -> tag
                         },
                         color = textColor,
@@ -7754,59 +7761,84 @@ private fun DiscoverScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // 2-Column Grid
         if (filteredCharacters.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.no_characters_found), color = LocalRoleplayColors.current.textSecondary)
-            }
-        } else {
-            val chunked = filteredCharacters.chunked(2)
-            LazyColumn(
-                contentPadding = PaddingValues(bottom = 16.dp),
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .weight(1f)
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 24.dp),
+                contentAlignment = Alignment.Center
             ) {
-                items(chunked) { pair ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                Surface(
+                    color = LocalRoleplayColors.current.surface,
+                    shape = RoundedCornerShape(24.dp),
+                    border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 22.dp, vertical = 28.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        val left = pair.getOrNull(0)
-                        val right = pair.getOrNull(1)
-
-                        Box(modifier = Modifier.weight(1f)) {
-                            if (left != null) {
-                                CharacterCard(
-                                    char = left,
-                                    onClick = { onSelectCharacter(left) },
-                                    onLongPress = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        actionTarget = left.sessionId?.let { id ->
-                                            viewModel.sessions.firstOrNull { it.id == id }
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                        Box(modifier = Modifier.weight(1f)) {
-                            if (right != null) {
-                                CharacterCard(
-                                    char = right,
-                                    onClick = { onSelectCharacter(right) },
-                                    onLongPress = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        actionTarget = right.sessionId?.let { id ->
-                                            viewModel.sessions.firstOrNull { it.id == id }
-                                        }
-                                    }
-                                )
-                            }
-                        }
+                        Text(
+                            text = stringResource(R.string.no_characters_found),
+                            color = LocalRoleplayColors.current.textPrimary,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = stringResource(R.string.no_characters_found_hint),
+                            color = LocalRoleplayColors.current.textSecondary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
+            }
+        } else {
+            val pagerState = rememberPagerState(pageCount = { filteredCharacters.size })
+            LaunchedEffect(filteredCharacters.size, searchQuery, selectedTag) {
+                if (filteredCharacters.isNotEmpty()) {
+                    pagerState.scrollToPage(pagerState.currentPage.coerceIn(0, filteredCharacters.lastIndex))
+                }
+            }
+
+            HorizontalPager(
+                state = pagerState,
+                contentPadding = PaddingValues(horizontal = 28.dp),
+                pageSpacing = 14.dp,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f)
+            ) {
+                page ->
+                val character = filteredCharacters[page]
+                val pageOffset = (
+                    (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
+                ).let(::abs).coerceIn(0f, 1f)
+                val cardScale = 0.92f + ((1f - pageOffset) * 0.08f)
+                val cardAlpha = 0.74f + ((1f - pageOffset) * 0.26f)
+
+                CharacterCarouselCard(
+                    char = character,
+                    pageCount = filteredCharacters.size,
+                    pageIndex = page,
+                    onChat = { onSelectCharacter(character) },
+                    onLongPress = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        actionTarget = character.sessionId?.let { id ->
+                            viewModel.sessions.firstOrNull { it.id == id }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .graphicsLayer {
+                            scaleX = cardScale
+                            scaleY = cardScale
+                            alpha = cardAlpha
+                        }
+                )
             }
         }
     }
@@ -7840,6 +7872,216 @@ private fun DiscoverScreen(
                 actionTarget = null
             }
         )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CharacterCarouselCard(
+    char: PresetCharacter,
+    pageCount: Int,
+    pageIndex: Int,
+    onChat: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = Color.Black,
+        shape = RoundedCornerShape(30.dp),
+        border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke.copy(alpha = 0.75f)),
+        shadowElevation = 12.dp,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(bottom = 18.dp)
+            .combinedClickable(
+                onClick = {},
+                onLongClick = onLongPress
+            )
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (char.avatarUri != null) {
+                Image(
+                    painter = rememberAsyncImagePainter(char.avatarUri),
+                    contentDescription = "${char.name} avatar",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    LocalRoleplayColors.current.accent.copy(alpha = 0.5f),
+                                    Color(0xFF8B5CF6).copy(alpha = 0.35f),
+                                    LocalRoleplayColors.current.surface
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = char.name.take(1).uppercase(),
+                        style = TextStyle(
+                            brush = Brush.horizontalGradient(
+                                listOf(LocalRoleplayColors.current.accent, Color(0xFF8B5CF6))
+                            ),
+                            fontSize = 116.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Black.copy(alpha = 0.06f),
+                            0.42f to Color.Black.copy(alpha = 0.08f),
+                            0.76f to Color.Black.copy(alpha = 0.58f),
+                            1f to Color.Black.copy(alpha = 0.9f)
+                        )
+                    )
+            )
+
+            if (pageCount > 1) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 18.dp, end = 18.dp)
+                ) {
+                    repeat(pageCount.coerceAtMost(5)) { index ->
+                        val selected = if (pageCount <= 5) {
+                            index == pageIndex
+                        } else {
+                            index == (pageIndex * 5 / pageCount).coerceIn(0, 4)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .width(if (selected) 16.dp else 7.dp)
+                                .height(7.dp)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(Color.White.copy(alpha = if (selected) 0.86f else 0.34f))
+                        )
+                    }
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(horizontal = 22.dp, vertical = 22.dp)
+            ) {
+                Text(
+                    text = char.name,
+                    color = Color.White,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    CarouselInfoChip(
+                        text = char.author,
+                        emphasize = true,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (char.tags.isNotEmpty()) {
+                        CarouselInfoChip(
+                            text = char.tags.first(),
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
+                }
+
+                if (char.tags.size > 1) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        char.tags.drop(1).take(2).forEach { tag ->
+                            CarouselInfoChip(
+                                text = tag,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = char.greeting.ifBlank { char.tagline },
+                    color = Color.White.copy(alpha = 0.86f),
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(LocalRoleplayColors.current.buttonCyan, Color(0xFFB685FF))
+                            )
+                        )
+                        .clickable(onClick = onChat),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Chat",
+                        color = Color.Black,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CarouselInfoChip(
+    text: String,
+    modifier: Modifier = Modifier,
+    emphasize: Boolean = false
+) {
+    Surface(
+        color = Color.White.copy(alpha = if (emphasize) 0.22f else 0.18f),
+        shape = RoundedCornerShape(999.dp),
+        modifier = modifier.height(34.dp)
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        ) {
+            Text(
+                text = text,
+                color = Color.White.copy(alpha = 0.9f),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (emphasize) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -8219,9 +8461,11 @@ private fun CreateScreen(
     onImportSession: () -> Unit,
     onImportConfig: () -> Unit
 ) {
+    val context = LocalContext.current
     var name by remember { mutableStateOf("") }
     var tagline by remember { mutableStateOf("") }
     var selectedTags by remember { mutableStateOf(listOf<String>()) }
+    var selectedGender by remember { mutableStateOf<String?>(null) }
     var showTagPicker by remember { mutableStateOf(false) }
     var showAutoFill by remember { mutableStateOf(false) }
     var prompt by remember { mutableStateOf("") }
@@ -8230,194 +8474,265 @@ private fun CreateScreen(
     var avatarUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var background by remember { mutableStateOf<ChatBackground>(ChatBackground.DarkMode) }
 
+    fun persistPickedImage(uri: android.net.Uri) {
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+    }
+
+    fun clearCreateForm() {
+        name = ""
+        tagline = ""
+        selectedTags = emptyList()
+        selectedGender = null
+        prompt = ""
+        greeting = ""
+        storyLore = ""
+        avatarUri = null
+        background = ChatBackground.DarkMode
+    }
+
+    fun selectGender(tag: String) {
+        selectedGender = tag
+        selectedTags = (selectedTags.filterNot { it in CreateGenderTags } + tag).distinct()
+    }
+
     val avatarPicker = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
-        onResult = { uri -> if (uri != null) avatarUri = uri }
+        onResult = { uri ->
+            if (uri != null) {
+                persistPickedImage(uri)
+                avatarUri = uri
+            }
+        }
     )
     val backgroundPicker = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
-        onResult = { uri -> if (uri != null) background = ChatBackground.CustomImage(uri) }
+        onResult = { uri ->
+            if (uri != null) {
+                persistPickedImage(uri)
+                background = ChatBackground.CustomImage(uri)
+            }
+        }
     )
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
+            .background(LocalRoleplayColors.current.background)
+            .padding(horizontal = 16.dp)
             .verticalScroll(rememberScrollState())
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 16.dp),
+                .padding(top = 16.dp, bottom = 18.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = stringResource(R.string.create_character_title),
-                style = MaterialTheme.typography.titleLarge,
-                color = LocalRoleplayColors.current.textPrimary
-            )
-            TextButton(
-                onClick = { showAutoFill = true },
-                colors = ButtonDefaults.textButtonColors(contentColor = LocalRoleplayColors.current.accent)
+            IconButton(
+                onClick = ::clearCreateForm,
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(LocalRoleplayColors.current.surface)
+                    .border(1.dp, LocalRoleplayColors.current.stroke, CircleShape)
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.AutoAwesome,
-                    contentDescription = "AI Auto-fill",
-                    modifier = Modifier.size(16.dp)
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.create_reset_form),
+                    tint = LocalRoleplayColors.current.textPrimary
                 )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.ai_autofill), style = MaterialTheme.typography.labelMedium)
             }
-        }
-
-        val previewPersona = remember(avatarUri) {
-            PersonaUiState(avatarUri = avatarUri)
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(contentAlignment = Alignment.BottomEnd) {
-                Box(
-                    modifier = Modifier
-                        .size(100.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(LocalRoleplayColors.current.accentSoft.copy(alpha = 0.45f), LocalRoleplayColors.current.surface2)
-                            )
-                        )
-                        .border(2.dp, LocalRoleplayColors.current.accentSoft, CircleShape)
-                        .padding(3.dp)
-                ) {
-                    Avatar(
-                        persona = previewPersona,
-                        size = 94,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-                IconButton(
-                    onClick = { avatarPicker.launch(arrayOf("image/*")) },
-                    modifier = Modifier
-                        .offset(x = 2.dp, y = 2.dp)
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(LocalRoleplayColors.current.surface2)
-                        .border(1.dp, LocalRoleplayColors.current.stroke, CircleShape)
+            Text(
+                text = stringResource(R.string.create_character_title),
+                style = MaterialTheme.typography.headlineSmall,
+                color = LocalRoleplayColors.current.textPrimary,
+                fontWeight = FontWeight.Bold
+            )
+            Surface(
+                color = LocalRoleplayColors.current.surface,
+                shape = RoundedCornerShape(999.dp),
+                border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+                onClick = { showAutoFill = true },
+                modifier = Modifier.height(44.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.Upload,
-                        contentDescription = "Upload avatar",
-                        tint = LocalRoleplayColors.current.accentSoft,
-                        modifier = Modifier.size(18.dp)
+                        imageVector = Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = LocalRoleplayColors.current.accent,
+                        modifier = Modifier.size(17.dp)
+                    )
+                    Text(
+                        text = stringResource(R.string.ai_autofill),
+                        color = LocalRoleplayColors.current.textPrimary,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                 }
             }
         }
 
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = { Text(stringResource(R.string.character_name_label)) },
-            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-        )
-
-        OutlinedTextField(
-            value = tagline,
-            onValueChange = { tagline = it },
-            label = { Text(stringResource(R.string.character_tagline_label)) },
-            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-        )
-
-        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-            Text(stringResource(R.string.tags_traits_label), color = LocalRoleplayColors.current.textPrimary, style = MaterialTheme.typography.labelLarge)
-            Spacer(modifier = Modifier.height(8.dp))
-            if (selectedTags.isNotEmpty()) {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-                ) {
-                    selectedTags.forEach { tag ->
-                        Surface(
-                            color = LocalRoleplayColors.current.accent.copy(alpha = 0.15f),
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, LocalRoleplayColors.current.accent.copy(alpha = 0.4f))
+        CreateFormCard(title = stringResource(R.string.character_image_section)) {
+            Surface(
+                color = LocalRoleplayColors.current.surface2,
+                shape = RoundedCornerShape(22.dp),
+                border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+                modifier = Modifier
+                    .width(156.dp)
+                    .height(196.dp)
+                    .clickable { avatarPicker.launch(arrayOf("image/*")) }
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    if (avatarUri != null) {
+                        Image(
+                            painter = rememberAsyncImagePainter(avatarUri),
+                            contentDescription = stringResource(R.string.character_image_section),
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(10.dp)
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.55f)),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                  Text(tag, color = Color(0xFFFF8FA3), fontSize = 12.sp)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Icon(
-                                    imageVector = Icons.Rounded.Close,
-                                    contentDescription = "Remove tag",
-                                    tint = Color(0xFFFF8FA3),
-                                    modifier = Modifier
-                                        .size(14.dp)
-                                        .clickable { selectedTags = selectedTags - tag }
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Rounded.Upload,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    } else {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Rounded.Add,
+                                contentDescription = null,
+                                tint = LocalRoleplayColors.current.textSecondary,
+                                modifier = Modifier.size(42.dp)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = stringResource(R.string.upload_avatar),
+                                color = LocalRoleplayColors.current.textSecondary,
+                                style = MaterialTheme.typography.labelMedium,
+                                textAlign = TextAlign.Center
+                            )
                         }
                     }
                 }
             }
-            Button(
-                onClick = { showTagPicker = true },
-                colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.surface),
-                shape = RoundedCornerShape(12.dp),
+        }
+
+        CreateTextFieldCard(
+            title = stringResource(R.string.character_name_required),
+            value = name,
+            onValueChange = { name = it.take(32) },
+            placeholder = stringResource(R.string.character_name_placeholder),
+            singleLine = true
+        )
+
+        CreateFormCard(title = stringResource(R.string.gender_label)) {
+            CreateGenderSelector(
+                selected = selectedGender,
+                onSelect = ::selectGender
+            )
+        }
+
+        CreateTextFieldCard(
+            title = stringResource(R.string.short_tagline_label),
+            value = tagline,
+            onValueChange = { tagline = it.take(80) },
+            placeholder = stringResource(R.string.short_tagline_placeholder),
+            singleLine = true
+        )
+
+        CreateFormCard(title = stringResource(R.string.tags_traits_label)) {
+            if (selectedTags.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    selectedTags.forEach { tag ->
+                        CreateTagChip(
+                            tag = tag,
+                            onRemove = {
+                                selectedTags = selectedTags - tag
+                                if (selectedGender == tag) selectedGender = null
+                            }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+            Surface(
+                color = LocalRoleplayColors.current.surface2,
+                shape = RoundedCornerShape(18.dp),
                 border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+                onClick = { showTagPicker = true },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(Icons.Rounded.Add, contentDescription = null, tint = LocalRoleplayColors.current.textSecondary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.add_tags), color = LocalRoleplayColors.current.textSecondary)
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        Icons.Rounded.Add,
+                        contentDescription = null,
+                        tint = LocalRoleplayColors.current.textSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.add_tags),
+                        color = LocalRoleplayColors.current.textSecondary,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
             }
         }
 
-        OutlinedTextField(
-            value = prompt,
-            onValueChange = { prompt = it },
-            label = { Text(stringResource(R.string.system_prompt_label)) },
-            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
-            shape = RoundedCornerShape(12.dp),
-            minLines = 4,
-            maxLines = 8,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-        )
-
-        OutlinedTextField(
+        CreateTextFieldCard(
+            title = stringResource(R.string.greeting_label),
             value = greeting,
             onValueChange = { greeting = it },
-            label = { Text(stringResource(R.string.greeting_label)) },
-            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
-            shape = RoundedCornerShape(12.dp),
-            minLines = 3,
-            maxLines = 6,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+            placeholder = stringResource(R.string.opening_message_placeholder),
+            minLines = 4,
+            maxLines = 7
         )
 
-        OutlinedTextField(
+        CreateTextFieldCard(
+            title = stringResource(R.string.long_description_label),
+            value = prompt,
+            onValueChange = { prompt = it },
+            placeholder = stringResource(R.string.long_description_placeholder),
+            minLines = 7,
+            maxLines = 12
+        )
+
+        CreateTextFieldCard(
+            title = stringResource(R.string.lorebook_label),
             value = storyLore,
             onValueChange = { storyLore = it.take(16000) },
-            label = { Text(stringResource(R.string.lorebook_label)) },
-            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
-            shape = RoundedCornerShape(12.dp),
+            placeholder = stringResource(R.string.lorebook_placeholder),
             minLines = 4,
             maxLines = 8,
-            supportingText = {
-                Text(stringResource(R.string.lorebook_counter, storyLore.length), color = LocalRoleplayColors.current.textSecondary)
-            },
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            footer = stringResource(R.string.lorebook_counter, storyLore.length)
         )
 
         BackgroundOptions(
@@ -8428,7 +8743,8 @@ private fun CreateScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Button(
+        GradientCreateButton(
+            enabled = name.isNotBlank(),
             onClick = {
                 if (name.isNotBlank()) {
                     viewModel.createSessionWithPersona(
@@ -8444,14 +8760,8 @@ private fun CreateScreen(
                     onCreated()
                 }
             },
-            colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.accent),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp)
-        ) {
-            Text(stringResource(R.string.create_and_chat), color = Color.White, fontWeight = FontWeight.Bold)
-        }
+            text = stringResource(R.string.create_and_chat)
+        )
 
         Spacer(modifier = Modifier.height(24.dp))
 
@@ -8466,33 +8776,19 @@ private fun CreateScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        OutlinedButton(
+        CreateImportButton(
+            text = stringResource(R.string.import_session_btn),
             onClick = onImportSession,
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp)
-        ) {
-            Icon(Icons.Rounded.FileOpen, contentDescription = null, tint = LocalRoleplayColors.current.accentSoft)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.import_session_btn), color = LocalRoleplayColors.current.textPrimary)
-        }
+        )
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        OutlinedButton(
-            onClick = onImportConfig,
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp)
-        ) {
-            Icon(Icons.Rounded.FileOpen, contentDescription = null, tint = LocalRoleplayColors.current.accentSoft)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.import_config_btn), color = LocalRoleplayColors.current.textPrimary)
-        }
+        CreateImportButton(
+            text = stringResource(R.string.import_config_btn),
+            onClick = onImportConfig
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
     }
 
     TagPickerDialog(
@@ -8500,7 +8796,9 @@ private fun CreateScreen(
         selectedTags = selectedTags,
         onDismiss = { showTagPicker = false },
         onConfirm = { tags ->
-            selectedTags = tags
+            val normalizedGender = tags.firstOrNull { it in CreateGenderTags }
+            selectedGender = normalizedGender
+            selectedTags = (tags.filterNot { it in CreateGenderTags } + listOfNotNull(normalizedGender)).distinct()
             showTagPicker = false
         }
     )
@@ -8521,6 +8819,213 @@ private fun CreateScreen(
             }
         }
     )
+}
+
+private val CreateGenderTags = listOf("Male", "Female", "Other")
+
+@Composable
+private fun CreateFormCard(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        color = LocalRoleplayColors.current.surface,
+        shape = RoundedCornerShape(28.dp),
+        border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(bottom = 14.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = title,
+                color = LocalRoleplayColors.current.textPrimary,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            content()
+        }
+    }
+}
+
+@Composable
+private fun CreateTextFieldCard(
+    title: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = false,
+    minLines: Int = 1,
+    maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
+    footer: String? = null
+) {
+    CreateFormCard(title = title, modifier = modifier) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = { Text(placeholder, color = LocalRoleplayColors.current.textSecondary.copy(alpha = 0.72f)) },
+            singleLine = singleLine,
+            minLines = minLines,
+            maxLines = maxLines,
+            textStyle = TextStyle(color = LocalRoleplayColors.current.textPrimary),
+            shape = RoundedCornerShape(20.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = LocalRoleplayColors.current.textPrimary,
+                unfocusedTextColor = LocalRoleplayColors.current.textPrimary,
+                focusedContainerColor = LocalRoleplayColors.current.surface2,
+                unfocusedContainerColor = LocalRoleplayColors.current.surface2,
+                focusedBorderColor = LocalRoleplayColors.current.accent,
+                unfocusedBorderColor = Color.Transparent,
+                cursorColor = LocalRoleplayColors.current.accent
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (footer != null) {
+            Text(
+                text = footer,
+                color = LocalRoleplayColors.current.textSecondary,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.End,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+private fun CreateGenderSelector(
+    selected: String?,
+    onSelect: (String) -> Unit
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        CreateGenderTags.forEach { gender ->
+            val isSelected = selected == gender
+            val label = when (gender) {
+                "Male" -> stringResource(R.string.gender_male)
+                "Female" -> stringResource(R.string.gender_female)
+                else -> stringResource(R.string.gender_other)
+            }
+            Surface(
+                color = if (isSelected) LocalRoleplayColors.current.accent.copy(alpha = 0.16f) else LocalRoleplayColors.current.surface2,
+                shape = RoundedCornerShape(999.dp),
+                border = BorderStroke(
+                    width = if (isSelected) 2.dp else 1.dp,
+                    color = if (isSelected) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.stroke
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .clickable { onSelect(gender) }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = label,
+                        color = if (isSelected) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.textPrimary,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreateTagChip(
+    tag: String,
+    onRemove: () -> Unit
+) {
+    Surface(
+        color = LocalRoleplayColors.current.accent.copy(alpha = 0.14f),
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, LocalRoleplayColors.current.accent.copy(alpha = 0.32f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = tag,
+                color = LocalRoleplayColors.current.accent,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1
+            )
+            Icon(
+                imageVector = Icons.Rounded.Close,
+                contentDescription = "Remove tag",
+                tint = LocalRoleplayColors.current.accent,
+                modifier = Modifier
+                    .size(14.dp)
+                    .clickable(onClick = onRemove)
+            )
+        }
+    }
+}
+
+@Composable
+private fun GradientCreateButton(
+    enabled: Boolean,
+    onClick: () -> Unit,
+    text: String
+) {
+    val alpha = if (enabled) 1f else 0.45f
+    Surface(
+        color = Color.Transparent,
+        shape = RoundedCornerShape(999.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(58.dp)
+            .alpha(alpha)
+            .clip(RoundedCornerShape(999.dp))
+            .background(
+                Brush.horizontalGradient(
+                    listOf(Color(0xFF67E8F9), Color(0xFF8B5CF6), Color(0xFFFF5D8F))
+                )
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = text,
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+private fun CreateImportButton(
+    text: String,
+    onClick: () -> Unit
+) {
+    OutlinedButton(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = LocalRoleplayColors.current.surface,
+            contentColor = LocalRoleplayColors.current.textPrimary
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+    ) {
+        Icon(Icons.Rounded.FileOpen, contentDescription = null, tint = LocalRoleplayColors.current.accentSoft)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(text, color = LocalRoleplayColors.current.textPrimary, fontWeight = FontWeight.Bold)
+    }
 }
 
 private val TAG_CATEGORIES = linkedMapOf(
