@@ -197,15 +197,30 @@ enum class AppNameChoice(
 }
 
 sealed interface AppUpdateState {
-    data object Idle : AppUpdateState
+    data object Unknown : AppUpdateState
     data object Checking : AppUpdateState
-    data object UpToDate : AppUpdateState
-    data object Installing : AppUpdateState
+    data class UpToDate(
+        val currentVersion: String,
+        val checkedAtMillis: Long
+    ) : AppUpdateState
     data class UpdateAvailable(
-        val versionName: String,
+        val currentVersion: String,
+        val latestVersion: String,
+        val downloadUrl: String,
+        val assetName: String
+    ) : AppUpdateState
+    data class Downloading(
+        val latestVersion: String,
+        val progressPercent: Int
+    ) : AppUpdateState
+    data class InstallerOpened(
+        val attemptedVersion: String,
+        val openedAtMillis: Long
+    ) : AppUpdateState
+    data class PermissionNeeded(
+        val latestVersion: String,
         val downloadUrl: String
     ) : AppUpdateState
-    data class Downloading(val progressPercent: Int) : AppUpdateState
     data class Error(val message: String) : AppUpdateState
 }
 
@@ -430,7 +445,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     var appSettingsVisible by mutableStateOf(false)
         private set
 
-    var appUpdateState by mutableStateOf<AppUpdateState>(AppUpdateState.Idle)
+    var appUpdateState by mutableStateOf<AppUpdateState>(AppUpdateState.Unknown)
         private set
 
     var apiKeyDraft by mutableStateOf("")
@@ -663,6 +678,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch(Dispatchers.IO) {
             cleanupDownloadedUpdateApks(getApplication())
+        }
+        viewModelScope.launch {
+            checkForUpdates(silent = true)
         }
         viewModelScope.launch {
             restoreProjects()
@@ -3276,78 +3294,99 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         appSettingsVisible = false
     }
 
-    fun checkForUpdates() {
+    fun checkForUpdates(silent: Boolean = false) {
         if (appUpdateState is AppUpdateState.Checking ||
-            appUpdateState is AppUpdateState.Downloading ||
-            appUpdateState is AppUpdateState.Installing
+            appUpdateState is AppUpdateState.Downloading
         ) {
             return
         }
         appUpdateState = AppUpdateState.Checking
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val release = fetchLatestGitHubRelease()
-                    val latestVersion = release.optString("tag_name")
-                        .removePrefix("v")
-                        .trim()
-                    if (latestVersion.isBlank()) {
-                        throw IOException("Latest release has no version tag.")
-                    }
-                    val apkAsset = release.findBestZoraApkAsset()
-                        ?: throw IOException("Latest release has no APK asset.")
-                    val currentVersion = getApplication<Application>().currentPackageVersionName()
-                    if (compareVersionNames(latestVersion, currentVersion) > 0) {
-                        AppUpdateState.UpdateAvailable(
-                            versionName = latestVersion,
-                            downloadUrl = apkAsset.getString("browser_download_url")
-                        )
-                    } else {
-                        AppUpdateState.UpToDate
-                    }
-                }
+                runCatching { resolveLatestUpdateState(getApplication()) }
             }
             appUpdateState = result.getOrElse { throwable ->
-                AppUpdateState.Error(throwable.message?.take(160) ?: "Update check failed.")
+                if (silent) {
+                    AppUpdateState.Unknown
+                } else {
+                    AppUpdateState.Error(throwable.message?.take(160) ?: "Update check failed.")
+                }
             }
         }
     }
 
+    fun refreshUpdateStatusAfterResume() {
+        when (appUpdateState) {
+            is AppUpdateState.InstallerOpened,
+            is AppUpdateState.PermissionNeeded -> checkForUpdates(silent = true)
+            else -> Unit
+        }
+    }
+
+    fun openInstallPermissionSettings() {
+        if (appUpdateState !is AppUpdateState.PermissionNeeded) return
+        runCatching {
+            openUnknownAppSourcesSettings(getApplication())
+        }.onFailure { throwable ->
+            appUpdateState = AppUpdateState.Error(
+                throwable.message?.take(160) ?: "Could not open install permission settings."
+            )
+        }
+    }
+
     fun downloadAndInstallUpdate() {
-        val update = appUpdateState as? AppUpdateState.UpdateAvailable ?: return
-        appUpdateState = AppUpdateState.Downloading(0)
+        val state = appUpdateState
+        val update = when (state) {
+            is AppUpdateState.UpdateAvailable -> state
+            is AppUpdateState.PermissionNeeded -> AppUpdateState.UpdateAvailable(
+                currentVersion = getApplication<Application>().currentPackageVersionName(),
+                latestVersion = state.latestVersion,
+                downloadUrl = state.downloadUrl,
+                assetName = "APK"
+            )
+            else -> return
+        }
+        appUpdateState = AppUpdateState.Downloading(update.latestVersion, 0)
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val context = getApplication<Application>()
+                    val freshState = resolveLatestUpdateState(context)
+                    if (freshState !is AppUpdateState.UpdateAvailable) {
+                        return@runCatching freshState
+                    }
                     cleanupDownloadedUpdateApks(context)
                     val updatesDir = File(context.cacheDir, UPDATE_CACHE_DIR).apply { mkdirs() }
-                    val updateFile = File(updatesDir, "zora-update-${update.versionName.sanitizeFilePart()}.apk")
+                    val updateFile = File(updatesDir, "zora-update-${freshState.latestVersion.sanitizeFilePart()}.apk")
                     var lastProgress = -1
-                    downloadApk(update.downloadUrl, updateFile) { progress ->
+                    downloadApk(freshState.downloadUrl, updateFile) { progress ->
                         if (progress != lastProgress) {
                             lastProgress = progress
                             viewModelScope.launch {
-                                appUpdateState = AppUpdateState.Downloading(progress)
+                                appUpdateState = AppUpdateState.Downloading(freshState.latestVersion, progress)
                             }
                         }
                     }
-                    updateFile
+                    val installResult = installDownloadedApk(context, updateFile)
+                    when (installResult) {
+                        InstallLaunchResult.InstallerOpened -> AppUpdateState.InstallerOpened(
+                            attemptedVersion = freshState.latestVersion,
+                            openedAtMillis = System.currentTimeMillis()
+                        )
+                        InstallLaunchResult.PermissionSettingsOpened -> AppUpdateState.PermissionNeeded(
+                            latestVersion = freshState.latestVersion,
+                            downloadUrl = freshState.downloadUrl
+                        )
+                    }
                 }
             }
             result
-                .onSuccess { updateFile ->
-                    appUpdateState = AppUpdateState.Installing
-                    runCatching { installDownloadedApk(getApplication(), updateFile) }
-                        .onFailure { throwable ->
-                            appUpdateState = AppUpdateState.Error(
-                                throwable.message?.take(160) ?: "Could not open installer."
-                            )
-                        }
+                .onSuccess { nextState ->
+                    appUpdateState = nextState
                 }
                 .onFailure { throwable ->
                     appUpdateState = AppUpdateState.Error(
-                        throwable.message?.take(160) ?: "Download failed."
+                        throwable.message?.take(160) ?: "Update failed."
                     )
                 }
         }
@@ -4669,10 +4708,41 @@ private const val XP_PER_TEXT_MESSAGE = 10
 private const val GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/Z0ra-AI/Zora.AI/releases/latest"
 private const val UPDATE_CACHE_DIR = "updates"
 
+private enum class InstallLaunchResult {
+    InstallerOpened,
+    PermissionSettingsOpened
+}
+
 private fun cleanupDownloadedUpdateApks(context: Context) {
     File(context.cacheDir, UPDATE_CACHE_DIR)
         .listFiles { file -> file.isFile && file.extension.equals("apk", ignoreCase = true) }
         ?.forEach { file -> runCatching { file.delete() } }
+}
+
+private fun resolveLatestUpdateState(context: Context): AppUpdateState {
+    val release = fetchLatestGitHubRelease()
+    val latestVersion = release.optString("tag_name")
+        .removePrefix("v")
+        .trim()
+    if (latestVersion.isBlank()) {
+        throw IOException("Latest release has no version tag.")
+    }
+    val apkAsset = release.findBestZoraApkAsset()
+        ?: throw IOException("Latest release has no APK asset.")
+    val currentVersion = context.currentPackageVersionName()
+    return if (compareVersionNames(latestVersion, currentVersion) > 0) {
+        AppUpdateState.UpdateAvailable(
+            currentVersion = currentVersion,
+            latestVersion = latestVersion,
+            downloadUrl = apkAsset.getString("browser_download_url"),
+            assetName = apkAsset.optString("name").ifBlank { "APK" }
+        )
+    } else {
+        AppUpdateState.UpToDate(
+            currentVersion = currentVersion,
+            checkedAtMillis = System.currentTimeMillis()
+        )
+    }
 }
 
 private fun fetchLatestGitHubRelease(): JSONObject {
@@ -4772,16 +4842,20 @@ private fun downloadApk(url: String, destination: File, onProgress: (Int) -> Uni
     }
 }
 
-private fun installDownloadedApk(context: Context, apkFile: File) {
+private fun openUnknownAppSourcesSettings(context: Context) {
+    val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+        data = Uri.parse("package:${context.packageName}")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    context.startActivity(settingsIntent)
+}
+
+private fun installDownloadedApk(context: Context, apkFile: File): InstallLaunchResult {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
         !context.packageManager.canRequestPackageInstalls()
     ) {
-        val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-            data = Uri.parse("package:${context.packageName}")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(settingsIntent)
-        throw IOException("Allow install unknown apps, then tap Update App again.")
+        openUnknownAppSourcesSettings(context)
+        return InstallLaunchResult.PermissionSettingsOpened
     }
 
     val apkUri = FileProvider.getUriForFile(
@@ -4795,6 +4869,7 @@ private fun installDownloadedApk(context: Context, apkFile: File) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(installIntent)
+    return InstallLaunchResult.InstallerOpened
 }
 
 private val LEVEL_THRESHOLDS = listOf(

@@ -180,6 +180,8 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.rememberAsyncImagePainter
 import com.yozora.aichat.R
 import com.yozora.aichat.ui.chat.AnimeImagePreset
@@ -228,7 +230,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 
-private const val APP_VERSION_NAME = "2.1.1"
+private const val APP_VERSION_NAME = "2.2.1"
 
 private fun Context.applyLanguageOverride(languageCode: String) {
     val locale = Locale.forLanguageTag(if (languageCode == "vi") "vi" else "en")
@@ -261,8 +263,20 @@ fun CompanionChatApp(
     var activeChatOpen by remember { mutableStateOf(false) }
     var pendingConfigExportSession by remember { mutableStateOf<ChatSession?>(null) }
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(viewModel.languageCode) {
         context.applyLanguageOverride(viewModel.languageCode)
+    }
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshUpdateStatusAfterResume()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
     val clipboardManager = LocalClipboardManager.current
     val voicePermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -9161,14 +9175,43 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
         Spacer(modifier = Modifier.height(10.dp))
 
         val updateState = viewModel.appUpdateState
+        Surface(
+            color = LocalRoleplayColors.current.surface,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 10.dp)
+        ) {
+            Text(
+                text = when (updateState) {
+                    AppUpdateState.Unknown -> "Checking app version..."
+                    AppUpdateState.Checking -> "Checking for updates..."
+                    is AppUpdateState.UpToDate -> "App is updated - v${updateState.currentVersion}"
+                    is AppUpdateState.UpdateAvailable -> "New version available - v${updateState.latestVersion}"
+                    is AppUpdateState.Downloading -> "Downloading v${updateState.latestVersion}"
+                    is AppUpdateState.InstallerOpened -> "Installer opened. Return here after installing."
+                    is AppUpdateState.PermissionNeeded -> "Install permission needed for v${updateState.latestVersion}"
+                    is AppUpdateState.Error -> updateState.message.ifBlank { "Update check failed." }
+                },
+                color = if (updateState is AppUpdateState.Error) {
+                    Color(0xFFFF8A80)
+                } else {
+                    LocalRoleplayColors.current.textSecondary
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(12.dp),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
         val updateButtonEnabled = updateState !is AppUpdateState.Checking &&
-            updateState !is AppUpdateState.Downloading &&
-            updateState !is AppUpdateState.Installing &&
-            updateState !is AppUpdateState.UpToDate
+            updateState !is AppUpdateState.Downloading
         Button(
             onClick = {
                 when (updateState) {
                     is AppUpdateState.UpdateAvailable -> viewModel.downloadAndInstallUpdate()
+                    is AppUpdateState.PermissionNeeded -> viewModel.openInstallPermissionSettings()
                     else -> viewModel.checkForUpdates()
                 }
             },
@@ -9194,11 +9237,12 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
             }
             Text(
                 text = when (updateState) {
-                    AppUpdateState.Idle -> "Update App"
+                    AppUpdateState.Unknown -> "Check for Updates"
                     AppUpdateState.Checking -> "Checking..."
-                    AppUpdateState.UpToDate -> "Up to date"
-                    AppUpdateState.Installing -> "Opening installer..."
-                    is AppUpdateState.UpdateAvailable -> "Download v${updateState.versionName}"
+                    is AppUpdateState.UpToDate -> "Check Again"
+                    is AppUpdateState.InstallerOpened -> "Check Again"
+                    is AppUpdateState.PermissionNeeded -> "Open Permission Settings"
+                    is AppUpdateState.UpdateAvailable -> "Download & Install"
                     is AppUpdateState.Downloading -> "Downloading ${updateState.progressPercent}%"
                     is AppUpdateState.Error -> updateState.message.ifBlank { "Try Update Again" }
                 },
