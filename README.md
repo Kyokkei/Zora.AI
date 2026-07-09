@@ -1,4 +1,4 @@
-# Zora.AI ◈ (v2.2.0)
+# Zora.AI ◈ (v2.2.3 / build 226)
 Zora.AI is a native Android AI companion built by Phan Chi Vy. 
 
 ## The TL;DR
@@ -35,24 +35,31 @@ Grok 4.3 (Lowest Risk) ──> Gemini 3.5 ──> GPT-5.5 ──> Claude 4.8 (Hi
 
 ---
 
-## 🌟 What's New in v2.2.0
-* 🎭 **Modern Roleplay UI**: A gorgeous, immersive card-based interface tailored for companion chats. You can seamlessly switch between this and the classic **Legacy UI** via the Settings page.
-* 🇻🇳 **Vietnamese Language Support**: Full app localization in Vietnamese (`Tiếng Việt`) keeping community-specific terms intact.
-* 📂 **Zora Share (.zorashare)**: You can now export and import your custom companion configurations or even entire chat sessions including text messages, level progress, and media (avatar PFP and background chat images are compressed and carried over automatically).
-* 🏷️ **Tag & Meta System**: Companions now feature a dedicated tag system, tag-aware AI instructions, customized tags, descriptions, and creator author tags.
+## 🌟 What's New in v2.2.3
+* 🎠 **Discover Hero Carousel**: The Roleplay Discover tab now uses a swipeable full-screen character carousel with side peeks, search, real user tags, detail sheets, and direct Chat actions.
+* 📌 **Pinned & Favorite Characters**: Pin or favorite local sessions, filter them in Discover, and keep priority characters surfaced ahead of the rest.
+* 🧾 **Create Editor Redesign**: The Create tab now opens directly into a polished full-screen editor with image upload, gender tags, live preview, validation, AI auto-fill, autosave, and the existing import actions.
+* 🔎 **Import Preview + Duplicate Warnings**: `.zorashare` and config imports now show a preview before saving, including character info, message count, import type, and duplicate warnings.
+* ⬆️ **VersionCode Updater Metadata**: GitHub releases now ship `zora-update.json`, so the in-app updater can detect same-label hotfixes like `v2.2.3 (226)`.
+* 💬 **Chat UI Polish**: Chat bubbles are wider, grouped messages read cleaner, inline tap actions are easier to reach, active tool chips show near the input, and the mic button opens the existing voice call flow.
+* 🖼️ **Better Profile Photo Picking**: Personal profile avatars now use the image picker flow and are copied into app-private storage so they survive restarts and updates.
 
 ---
 
 ## Features
 *(Everything is free to use. The only cost is what you pay directly to your API/TTS providers).*
 
-* 🎭 **Custom AI Personas**: Customize name, avatar, system instructions, tone, and character lore.
+* 🎭 **Custom AI Personas**: Customize name, avatar, author, tags, short description, system instructions, opening message, lorebook, background, tone, and character behavior.
+* 🎠 **Roleplay Discover Carousel**: Browse custom and preset characters through a mobile-first hero carousel with search, tag filters, character detail sheets, direct chat launch, long-press actions, pins, and favorites.
+* ✍️ **Full-Screen Character Creator**: Create companions with live preview, image upload, gender tags, selected tags, prompt/greeting/lore fields, AI auto-fill, autosave, and Create & Chat flow.
 * 👥 **Multi-Agent Chats**: Host 1 to 4 AI agents in a single room. Let them debate, or `@tag` them directly.
 * 📂 **Project Templates**: Share instructions and memories across multiple sessions seamlessly.
 * 🧠 **Global Memory**: Persistent, long-term memory that can be toggled on or off per chat.
 * 📈 **Relationship XP (Level 1–10)**: Session-based progression. The AI gets warmer, more compliant, and unlocks NSFW boundaries as you chat (NSFW unlocks at Level 5). Defaults to ON for all conversations and can be toggled in the Roleplay UI settings.
 * 💾 **Local-First Database**: Your chats survive app updates, restarts, and closures.
-* 🛠️ **Session Manager**: Clone, rename, search, move, and delete chat rooms instantly.
+* 🛠️ **Session Manager**: Clone, rename, search, move, export, pin, favorite, and delete chat rooms instantly.
+* 📦 **Zora Share (.zorashare)**: Export and import companion configs or full chat sessions, including messages, level progress, avatar images, and background images.
+* 🧪 **Import Safety Checks**: Preview imports before saving and choose normal import or Import as Copy when a duplicate character/session is detected.
 * 🔌 **Multi-Provider API**: Native support for **Gemini (best support for Live features)**, Claude, GPT, Grok, and Mistral.
 * 🔍 **Web Tools**: Live web search powered by Tavily.
 * 🔞 **Anime Image Search**: Search and pull images directly into the chat via Rule34.
@@ -60,11 +67,12 @@ Grok 4.3 (Lowest Risk) ──> Gemini 3.5 ──> GPT-5.5 ──> Claude 4.8 (Hi
 * 🎙️ **Gemini Live Calling**: Real-time voice calls with camera and screenshare support.
 * 📝 **Live Transcript**: Voice calls automatically compile into text bubbles and save to the chat history.
 * 🗣️ **ElevenLabs TTS**: High-quality message narration with built-in local audio caching.
-* 🎨 **Deep Customization**: Customize app themes, avatars, backgrounds, app name, and launcher icon.
+* 🎨 **Deep Customization**: Customize app themes, Roleplay dark/light mode, user profile, avatars, backgrounds, app name, and launcher icon.
 * ⚙️ **Developer Vault**: Tweak API safety settings, temperature, and thinking effort values.
 * ⏱️ **Quota Monitor**: Built-in local token counter and reset timer.
 * 📚 **Soft TPM Archive**: Preserves long conversations by summarizing older context instead of deleting it when Gemini approaches its 250K TPM limit.
-* 👆 **Message Context Menu**: Long-press any bubble to copy, edit, retry, or text-to-speech.
+* 👆 **Message Actions**: Tap for inline message actions or long-press any bubble to copy, edit, retry, or text-to-speech.
+* 🔄 **Self-Updater**: Check GitHub releases from inside the app, download the APK, open Android's installer, and compare update metadata by build code for same-version hotfixes.
 
 ---
 
@@ -156,4 +164,3 @@ Since this app is a solo-leveled project, here is the organizational structure:
 * **Coffee Maker**: Phan Chi Vy
 * **Janitor / Code Cleaner**: Phan Chi Vy
 * **Hype Man**: Phan Chi Vy
-
