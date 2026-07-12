@@ -1,0 +1,16 @@
+{
+  "name": "zora-hub",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "npm run build && wrangler pages dev dist",
+    "check": "tsc --noEmit",
+    "deploy": "npm run build && wrangler pages deploy dist --project-name zora-hub"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260712.1",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.110.0"
+  }
+}

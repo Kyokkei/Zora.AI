@@ -1,4 +1,4 @@
-# Zora.AI ◈ (v2.2.3 / build 226)
+# Zora.AI ◈ (v2.2.4 / build 227)
 Zora.AI is a native Android AI companion built by Phan Chi Vy. 
 
 ## The TL;DR
@@ -35,7 +35,14 @@ Grok 4.3 (Lowest Risk) ──> Gemini 3.5 ──> GPT-5.5 ──> Claude 4.8 (Hi
 
 ---
 
-## 🌟 What's New in v2.2.3
+## 🌟 What's New in v2.2.4
+* 🌐 **Invite-Only Community Hub**: Register once with a username and owner-provided invite code, then browse and search shared roleplay characters.
+* 📤 **Complete Character Publishing**: Share sanitized prompts, lore, tags, avatars, and custom backgrounds without exposing API keys or chat history.
+* 📥 **Safe Community Imports**: Community downloads flow through Zora's existing import preview and duplicate warning before becoming local characters.
+* 🧊 **Layered Caching**: Immutable media URLs, Cloudflare edge caching, and Coil's device cache reduce repeated downloads.
+* 🔐 **Free-Tier Guardrails**: Invite authentication, private object storage, upload limits, rate limits, and a 5 GB application storage ceiling protect the free allowance.
+
+## Previously in v2.2.3
 * 🎠 **Discover Hero Carousel**: The Roleplay Discover tab now uses a swipeable full-screen character carousel with side peeks, search, real user tags, detail sheets, and direct Chat actions.
 * 📌 **Pinned & Favorite Characters**: Pin or favorite local sessions, filter them in Discover, and keep priority characters surfaced ahead of the rest.
 * 🧾 **Create Editor Redesign**: The Create tab now opens directly into a polished full-screen editor with image upload, gender tags, live preview, validation, AI auto-fill, autosave, and the existing import actions.

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zora Hub</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Zora.AI</p>
+        <h1>Community Hub</h1>
+      </div>
+      <span id="health" class="status">Checking API</span>
+    </header>
+    <section class="panel">
+      <h2>Administration</h2>
+      <p>Create one-time invitation codes for trusted community members.</p>
+      <label>Admin key <input id="adminKey" type="password" autocomplete="off"></label>
+      <label>Expires in days <input id="days" type="number" min="1" max="365" value="30"></label>
+      <button id="createInvite">Create invite</button>
+      <output id="result" aria-live="polite"></output>
+    </section>
+  </main>
+  <script src="/admin.js" defer></script>
+</body>
+</html>

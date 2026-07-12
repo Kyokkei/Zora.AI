@@ -61,12 +61,15 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
+
+private const val HUB_BASE_URL = "https://zora-hub.pages.dev/api/v1"
 
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
@@ -366,6 +369,21 @@ data class ImportPreviewState(
         get() = session.messages.count { !it.isImageLoading }
 }
 
+data class HubCharacter(
+    val id: String,
+    val displayName: String,
+    val tagline: String,
+    val author: String,
+    val description: String,
+    val tags: List<String>,
+    val avatarUrl: String?,
+    val backgroundUrl: String?,
+    val configUrl: String?,
+    val favorites: Int = 0,
+    val isFavorite: Boolean = false,
+    val nsfw: Boolean = false
+)
+
 data class CreateDraftState(
     val name: String = "",
     val tagline: String = "",
@@ -445,6 +463,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val exportDefaultFolderUriKey = stringPreferencesKey("export_default_folder_uri")
     private val createDraftStateKey = stringPreferencesKey("create_character_draft_v1")
     private val languageCodeKey = stringPreferencesKey("language_code")
+    private val hubTokenKey = stringPreferencesKey("zora_hub_token_v1")
+    private val hubUsernameKey = stringPreferencesKey("zora_hub_username_v1")
     private val nsfwModeEnabledKey = booleanPreferencesKey("nsfw_mode_enabled_v1")
     private val summarizerSeparateKeyKey = booleanPreferencesKey("summarizer_use_separate_key")
     private val roleplayUiModeEnabledKey = booleanPreferencesKey("roleplay_ui_mode_enabled_v2")
@@ -531,6 +551,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     var createDraftState by mutableStateOf(CreateDraftState())
         private set
+
+    var hubUsername by mutableStateOf<String?>(null)
+        private set
+
+    var hubCharacters by mutableStateOf<List<HubCharacter>>(emptyList())
+        private set
+
+    var hubLoading by mutableStateOf(false)
+        private set
+
+    var hubMessage by mutableStateOf<String?>(null)
+        private set
+
+    private var hubToken: String? = null
 
     var chatError by mutableStateOf<String?>(null)
         private set
@@ -751,6 +785,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 roleplayUiModeEnabled = preferences[roleplayUiModeEnabledKey] ?: false
                 roleplayLightModeEnabled = preferences[roleplayLightModeKey] ?: false
                 languageCode = preferences[languageCodeKey] ?: "en"
+                hubToken = preferences[hubTokenKey]
+                hubUsername = preferences[hubUsernameKey]
                 createDraftState = preferences[createDraftStateKey]?.toCreateDraftState() ?: CreateDraftState()
             }
         }
@@ -2659,6 +2695,152 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissImportPreview() {
         importPreviewState = null
+    }
+
+    fun clearHubMessage() {
+        hubMessage = null
+    }
+
+    fun registerHub(username: String, inviteCode: String, onRecoveryCode: (String) -> Unit) {
+        if (username.isBlank() || inviteCode.isBlank() || hubLoading) return
+        hubLoading = true
+        hubMessage = null
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val body = JSONObject()
+                        .put("username", username.trim())
+                        .put("inviteCode", inviteCode.trim())
+                    val response = hubRequest("auth/register", "POST", body = body)
+                    Triple(response.getString("token"), response.getString("recoveryCode"), response.getJSONObject("user").getString("username"))
+                }
+            }
+            result.onSuccess { (token, recoveryCode, registeredUsername) ->
+                hubToken = token
+                hubUsername = registeredUsername
+                settingsDataStore.edit { preferences ->
+                    preferences[hubTokenKey] = token
+                    preferences[hubUsernameKey] = registeredUsername
+                }
+                onRecoveryCode(recoveryCode)
+                refreshHubCharacters()
+            }.onFailure { hubMessage = it.message ?: "Hub registration failed." }
+            hubLoading = false
+        }
+    }
+
+    fun refreshHubCharacters(query: String = "", includeNsfw: Boolean = nsfwModeEnabled) {
+        val token = hubToken ?: return
+        if (hubLoading) return
+        hubLoading = true
+        hubMessage = null
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+                    val response = hubRequest("characters?limit=40&q=$encoded&nsfw=${if (includeNsfw) 1 else 0}", token = token)
+                    val items = response.getJSONArray("items")
+                    buildList {
+                        for (index in 0 until items.length()) add(items.getJSONObject(index).toHubCharacter())
+                    }
+                }
+            }
+            result.onSuccess { hubCharacters = it }
+                .onFailure { hubMessage = it.message ?: "Could not load Community." }
+            hubLoading = false
+        }
+    }
+
+    fun importHubCharacter(characterId: String) {
+        val token = hubToken ?: return
+        if (hubLoading) return
+        hubLoading = true
+        hubMessage = null
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val detail = hubRequest("characters/$characterId", token = token)
+                    val configPath = detail.getString("configUrl")
+                    val config = JSONObject(hubDownload(configPath, token).toString(Charsets.UTF_8))
+                    detail.optString("avatarUrl").takeIf { it.isNotBlank() }?.let { path ->
+                        config.put("avatarBase64", android.util.Base64.encodeToString(hubDownload(path, token), android.util.Base64.NO_WRAP))
+                    }
+                    detail.optString("backgroundUrl").takeIf { it.isNotBlank() }?.let { path ->
+                        config.put("backgroundBase64", android.util.Base64.encodeToString(hubDownload(path, token), android.util.Base64.NO_WRAP))
+                    }
+                    buildImportPreview(parseConfigShareJson(getApplication(), config), "Community")
+                }
+            }
+            result.onSuccess { importPreviewState = it }
+                .onFailure { hubMessage = it.message ?: "Community import failed." }
+            hubLoading = false
+        }
+    }
+
+    fun publishSessionToHub(sessionId: String) {
+        val token = hubToken
+        if (token == null) {
+            hubMessage = "Register for Community before publishing."
+            return
+        }
+        val session = sessions.firstOrNull { it.id == sessionId } ?: return
+        if (hubLoading) return
+        hubLoading = true
+        hubMessage = null
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val config = JSONObject(configShareJsonFor(getApplication(), session))
+                    val body = JSONObject()
+                        .put("displayName", session.persona.displayName)
+                        .put("tagline", session.persona.tagline)
+                        .put("description", session.persona.instructionPrompt.take(500))
+                        .put("tags", JSONArray(session.persona.traits))
+                        .put("nsfw", nsfwModeEnabled)
+                        .put("config", config)
+                    config.optString("avatarBase64").takeIf { it.isNotBlank() }?.let { body.put("avatarBase64", it) }
+                    config.optString("backgroundBase64").takeIf { it.isNotBlank() }?.let { body.put("backgroundBase64", it) }
+                    val response = hubRequest("characters", "POST", token, body)
+                    response.getString("id")
+                }
+            }
+            result.onSuccess {
+                hubMessage = "${session.persona.displayName} published to Community."
+                refreshHubCharacters()
+            }.onFailure { hubMessage = it.message ?: "Publishing failed." }
+            hubLoading = false
+        }
+    }
+
+    private fun hubRequest(path: String, method: String = "GET", token: String? = null, body: JSONObject? = null): JSONObject {
+        val connection = (URL("$HUB_BASE_URL/${path.trimStart('/')}").openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = 12_000
+            readTimeout = 20_000
+            setRequestProperty("Accept", "application/json")
+            token?.let { setRequestProperty("Authorization", "Bearer $it") }
+            if (body != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+            }
+        }
+        body?.let { connection.outputStream.use { output -> output.write(it.toString().toByteArray()) } }
+        val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+        val raw = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        val json = raw.takeIf { it.isNotBlank() }?.let(::JSONObject) ?: JSONObject()
+        if (connection.responseCode !in 200..299) error(json.optString("error").ifBlank { "Hub request failed (${connection.responseCode})." })
+        return json
+    }
+
+    private fun hubDownload(path: String, token: String): ByteArray {
+        val url = if (path.startsWith("http")) path else "https://zora-hub.pages.dev$path"
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 12_000
+            readTimeout = 20_000
+            setRequestProperty("Authorization", "Bearer $token")
+        }
+        if (connection.responseCode !in 200..299) error("Hub download failed (${connection.responseCode}).")
+        return connection.inputStream.use { it.readBytes() }
     }
 
     fun confirmImportPreview(asCopy: Boolean) {
@@ -5304,6 +5486,29 @@ private fun parseSessionExportJson(raw: String): ChatSession? {
             else -> root.optJSONObject("session")?.toChatSession()
         }
     }.getOrNull()
+}
+
+private fun JSONObject.toHubCharacter(): HubCharacter {
+    val tagsJson = optJSONArray("tags")
+    val tags = buildList {
+        if (tagsJson != null) {
+            for (index in 0 until tagsJson.length()) tagsJson.optString(index).takeIf { it.isNotBlank() }?.let(::add)
+        }
+    }
+    return HubCharacter(
+        id = getString("id"),
+        displayName = optString("displayName").ifBlank { "Community character" },
+        tagline = optString("tagline"),
+        author = optString("author"),
+        description = optString("description"),
+        tags = tags,
+        avatarUrl = optString("avatarUrl").takeIf { it.isNotBlank() },
+        backgroundUrl = optString("backgroundUrl").takeIf { it.isNotBlank() },
+        configUrl = optString("configUrl").takeIf { it.isNotBlank() },
+        favorites = optInt("favorites"),
+        isFavorite = optBoolean("isFavorite"),
+        nsfw = optBoolean("nsfw")
+    )
 }
 
 private fun ChatSession.freshImportCopy(): ChatSession {

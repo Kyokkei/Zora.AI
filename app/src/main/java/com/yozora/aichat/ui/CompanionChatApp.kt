@@ -201,6 +201,7 @@ import com.yozora.aichat.ui.chat.CreateDraftState
 import com.yozora.aichat.ui.chat.GeminiLiveVoice
 import com.yozora.aichat.ui.chat.GeminiThinkingEffort
 import com.yozora.aichat.ui.chat.GroupMember
+import com.yozora.aichat.ui.chat.HubCharacter
 import com.yozora.aichat.ui.chat.ImportPreviewState
 import com.yozora.aichat.ui.chat.InstructionMode
 import com.yozora.aichat.ui.chat.LiveCallTranscriptLine
@@ -236,8 +237,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 
-private const val APP_VERSION_NAME = "2.2.3"
-private const val APP_VERSION_CODE = 226
+private const val APP_VERSION_NAME = "2.2.4"
+private const val APP_VERSION_CODE = 227
 
 private fun Context.applyLanguageOverride(languageCode: String) {
     val locale = Locale.forLanguageTag(if (languageCode == "vi") "vi" else "en")
@@ -8015,6 +8016,12 @@ private fun DiscoverScreen(
     var selectedTag by remember { mutableStateOf("All Tags") }
     var actionTarget by remember { mutableStateOf<ChatSession?>(null) }
     var detailTarget by remember { mutableStateOf<PresetCharacter?>(null) }
+    var communityVisible by remember { mutableStateOf(false) }
+
+    if (communityVisible) {
+        CommunityHubScreen(viewModel = viewModel, onBack = { communityVisible = false })
+        return
+    }
 
     val customCharacters = viewModel.sessions.filter { session ->
         session.persona.displayName.isNotBlank()
@@ -8093,6 +8100,11 @@ private fun DiscoverScreen(
                     fontFamily = FontFamily.SansSerif
                 )
             )
+            TextButton(onClick = { communityVisible = true }) {
+                Icon(Icons.Rounded.Public, contentDescription = null, tint = LocalRoleplayColors.current.accent)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Community", color = LocalRoleplayColors.current.accent, fontWeight = FontWeight.Bold)
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8269,6 +8281,10 @@ private fun DiscoverScreen(
                 viewModel.toggleSessionPinned(session.id)
                 actionTarget = null
             },
+            onPublish = {
+                viewModel.publishSessionToHub(session.id)
+                actionTarget = null
+            },
             onDelete = {
                 viewModel.deleteSession(session.id)
                 actionTarget = null
@@ -8337,6 +8353,165 @@ private fun DiscoverScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun CommunityHubScreen(
+    viewModel: ChatViewModel,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    var username by remember { mutableStateOf("") }
+    var inviteCode by remember { mutableStateOf("") }
+    var searchQuery by remember { mutableStateOf("") }
+    var recoveryCode by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(viewModel.hubUsername) {
+        if (viewModel.hubUsername != null) viewModel.refreshHubCharacters()
+    }
+    LaunchedEffect(viewModel.hubMessage) {
+        viewModel.hubMessage?.let {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show()
+            viewModel.clearHubMessage()
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = LocalRoleplayColors.current.textPrimary)
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Community", color = LocalRoleplayColors.current.textPrimary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    viewModel.hubUsername?.let { "Signed in as @$it" } ?: "Invite-only character sharing",
+                    color = LocalRoleplayColors.current.textSecondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            if (viewModel.hubUsername != null) {
+                IconButton(onClick = { viewModel.refreshHubCharacters(searchQuery) }) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = "Refresh", tint = LocalRoleplayColors.current.accent)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        if (viewModel.hubUsername == null) {
+            Surface(
+                color = LocalRoleplayColors.current.surface,
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Text("Join Zora Community", color = LocalRoleplayColors.current.textPrimary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Use the one-time code shared by the hub owner.", color = LocalRoleplayColors.current.textSecondary)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it.take(24) },
+                        label = { Text("Username") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = inviteCode,
+                        onValueChange = { inviteCode = it.trim() },
+                        label = { Text("Invite code") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Button(
+                        onClick = { viewModel.registerHub(username, inviteCode) { recoveryCode = it } },
+                        enabled = username.length >= 3 && inviteCode.isNotBlank() && !viewModel.hubLoading,
+                        colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.accent),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (viewModel.hubLoading) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                        else Text("Register", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        } else {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                trailingIcon = {
+                    IconButton(onClick = { viewModel.refreshHubCharacters(searchQuery) }) {
+                        Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Search")
+                    }
+                },
+                placeholder = { Text("Search Community") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            if (viewModel.hubLoading && viewModel.hubCharacters.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = LocalRoleplayColors.current.accent) }
+            } else if (viewModel.hubCharacters.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No shared characters yet.", color = LocalRoleplayColors.current.textSecondary)
+                }
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
+                    items(viewModel.hubCharacters, key = { it.id }) { character ->
+                        CommunityCharacterRow(character = character, onImport = { viewModel.importHubCharacter(character.id) })
+                    }
+                }
+            }
+        }
+    }
+
+    recoveryCode?.let { code ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Save your recovery code") },
+            text = { Text("This is shown once. Keep it somewhere private:\n\n$code") },
+            confirmButton = { TextButton(onClick = { recoveryCode = null }) { Text("I saved it") } }
+        )
+    }
+}
+
+@Composable
+private fun CommunityCharacterRow(character: HubCharacter, onImport: () -> Unit) {
+    Surface(
+        color = LocalRoleplayColors.current.surface,
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(shape = RoundedCornerShape(6.dp), color = LocalRoleplayColors.current.surface2, modifier = Modifier.size(72.dp)) {
+                if (character.avatarUrl != null) {
+                    Image(
+                        painter = rememberAsyncImagePainter("https://zora-hub.pages.dev${character.avatarUrl}"),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Box(contentAlignment = Alignment.Center) { Text(character.displayName.take(1).uppercase(), color = LocalRoleplayColors.current.accent, fontWeight = FontWeight.Bold) }
+                }
+            }
+            Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(character.displayName, color = LocalRoleplayColors.current.textPrimary, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("@${character.author}", color = LocalRoleplayColors.current.textSecondary, style = MaterialTheme.typography.bodySmall)
+                Text(character.tagline, color = LocalRoleplayColors.current.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+            }
+            IconButton(onClick = onImport) {
+                Icon(Icons.Rounded.FileOpen, contentDescription = "Preview import", tint = LocalRoleplayColors.current.accent)
+            }
+        }
     }
 }
 
@@ -8870,6 +9045,7 @@ private fun RoleplayActionSheet(
     onCloneSession: () -> Unit,
     onFavorite: () -> Unit,
     onPin: () -> Unit,
+    onPublish: (() -> Unit)? = null,
     onDelete: () -> Unit
 ) {
     Box(
@@ -8932,6 +9108,13 @@ private fun RoleplayActionSheet(
                     label = stringResource(R.string.action_clone_session),
                     onClick = onCloneSession
                 )
+                onPublish?.let {
+                    RoleplayActionSheetRow(
+                        icon = Icons.Rounded.Public,
+                        label = "Publish to Community",
+                        onClick = it
+                    )
+                }
                 RoleplayActionSheetRow(
                     icon = Icons.Rounded.FavoriteBorder,
                     label = if (session.isFavorite) "Unfavorite" else "Favorite",

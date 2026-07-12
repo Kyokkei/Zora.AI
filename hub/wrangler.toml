@@ -1,0 +1,17 @@
+name = "zora-hub"
+compatibility_date = "2026-07-12"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "zora-hub-db"
+database_id = "2406f16c-2854-443d-be2a-a38c3e436727"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "zora-hub-media"
+
+[vars]
+APP_ORIGIN = "https://zora-hub.pages.dev"
+MAX_TOTAL_STORAGE_BYTES = "5000000000"
+MAX_CHARACTERS_PER_USER = "20"

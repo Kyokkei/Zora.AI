@@ -7,3 +7,7 @@ local.properties
 .idea/
 .kotlin/
 app/src/main/assets/local_master_prompt.txt
+hub/node_modules/
+hub/.wrangler/
+hub/.dev.vars
+hub/dist/
