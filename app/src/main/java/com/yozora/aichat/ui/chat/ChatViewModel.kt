@@ -2758,12 +2758,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val detail = hubRequest("characters/$characterId", token = hubToken)
-                    val configPath = detail.getString("configUrl")
+                    val configPath = detail.optNullableString("configUrl")
+                        ?: error("This Community character has no downloadable config.")
                     val config = JSONObject(hubDownload(configPath, hubToken).toString(Charsets.UTF_8))
-                    detail.optString("avatarUrl").takeIf { it.isNotBlank() }?.let { path ->
+                    detail.optNullableString("avatarUrl")?.let { path ->
                         config.put("avatarBase64", android.util.Base64.encodeToString(hubDownload(path, hubToken), android.util.Base64.NO_WRAP))
                     }
-                    detail.optString("backgroundUrl").takeIf { it.isNotBlank() }?.let { path ->
+                    detail.optNullableString("backgroundUrl")?.let { path ->
                         config.put("backgroundBase64", android.util.Base64.encodeToString(hubDownload(path, hubToken), android.util.Base64.NO_WRAP))
                     }
                     buildImportPreview(parseConfigShareJson(getApplication(), config), "Community")
@@ -5500,9 +5501,9 @@ private fun JSONObject.toHubCharacter(): HubCharacter {
         author = optString("author"),
         description = optString("description"),
         tags = tags,
-        avatarUrl = optString("avatarUrl").takeIf { it.isNotBlank() },
-        backgroundUrl = optString("backgroundUrl").takeIf { it.isNotBlank() },
-        configUrl = optString("configUrl").takeIf { it.isNotBlank() },
+        avatarUrl = optNullableString("avatarUrl"),
+        backgroundUrl = optNullableString("backgroundUrl"),
+        configUrl = optNullableString("configUrl"),
         favorites = optInt("favorites"),
         isFavorite = optBoolean("isFavorite"),
         nsfw = optBoolean("nsfw")

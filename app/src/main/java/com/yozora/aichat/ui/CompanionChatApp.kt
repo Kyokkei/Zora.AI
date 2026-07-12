@@ -238,7 +238,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 
 private const val APP_VERSION_NAME = "2.2.4"
-private const val APP_VERSION_CODE = 228
+private const val APP_VERSION_CODE = 229
 
 private fun Context.applyLanguageOverride(languageCode: String) {
     val locale = Locale.forLanguageTag(if (languageCode == "vi") "vi" else "en")

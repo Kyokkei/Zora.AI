@@ -1,4 +1,4 @@
-# Zora.AI ◈ (v2.2.4 / build 228)
+# Zora.AI ◈ (v2.2.4 / build 229)
 Zora.AI is a native Android AI companion built by Phan Chi Vy. 
 
 ## The TL;DR
