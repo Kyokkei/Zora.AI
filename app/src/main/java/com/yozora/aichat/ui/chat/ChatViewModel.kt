@@ -2730,7 +2730,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshHubCharacters(query: String = "", includeNsfw: Boolean = nsfwModeEnabled) {
-        val token = hubToken ?: return
         if (hubLoading) return
         hubLoading = true
         hubMessage = null
@@ -2738,7 +2737,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-                    val response = hubRequest("characters?limit=40&q=$encoded&nsfw=${if (includeNsfw) 1 else 0}", token = token)
+                    val response = hubRequest("characters?limit=40&q=$encoded&nsfw=${if (includeNsfw) 1 else 0}", token = hubToken)
                     val items = response.getJSONArray("items")
                     buildList {
                         for (index in 0 until items.length()) add(items.getJSONObject(index).toHubCharacter())
@@ -2752,21 +2751,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun importHubCharacter(characterId: String) {
-        val token = hubToken ?: return
         if (hubLoading) return
         hubLoading = true
         hubMessage = null
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val detail = hubRequest("characters/$characterId", token = token)
+                    val detail = hubRequest("characters/$characterId", token = hubToken)
                     val configPath = detail.getString("configUrl")
-                    val config = JSONObject(hubDownload(configPath, token).toString(Charsets.UTF_8))
+                    val config = JSONObject(hubDownload(configPath, hubToken).toString(Charsets.UTF_8))
                     detail.optString("avatarUrl").takeIf { it.isNotBlank() }?.let { path ->
-                        config.put("avatarBase64", android.util.Base64.encodeToString(hubDownload(path, token), android.util.Base64.NO_WRAP))
+                        config.put("avatarBase64", android.util.Base64.encodeToString(hubDownload(path, hubToken), android.util.Base64.NO_WRAP))
                     }
                     detail.optString("backgroundUrl").takeIf { it.isNotBlank() }?.let { path ->
-                        config.put("backgroundBase64", android.util.Base64.encodeToString(hubDownload(path, token), android.util.Base64.NO_WRAP))
+                        config.put("backgroundBase64", android.util.Base64.encodeToString(hubDownload(path, hubToken), android.util.Base64.NO_WRAP))
                     }
                     buildImportPreview(parseConfigShareJson(getApplication(), config), "Community")
                 }
@@ -2832,12 +2830,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         return json
     }
 
-    private fun hubDownload(path: String, token: String): ByteArray {
+    private fun hubDownload(path: String, token: String?): ByteArray {
         val url = if (path.startsWith("http")) path else "https://zora-hub.pages.dev$path"
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 12_000
             readTimeout = 20_000
-            setRequestProperty("Authorization", "Bearer $token")
+            token?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
         if (connection.responseCode !in 200..299) error("Hub download failed (${connection.responseCode}).")
         return connection.inputStream.use { it.readBytes() }

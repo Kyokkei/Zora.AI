@@ -63,18 +63,21 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       return serveMedia(request, env, path.slice(1).join("/"));
     }
 
-    const user = await authenticate(request, env);
-    if (!user) return error("Authentication required.", 401);
-
+    const optionalUser = await authenticate(request, env);
     if (request.method === "GET" && path.length === 1 && path[0] === "characters") {
-      return listCharacters(request, env, user);
+      return listCharacters(request, env, optionalUser);
     }
+    if (request.method === "GET" && path[0] === "characters" && path[1] && path.length === 2) {
+      return characterDetail(env, optionalUser, path[1]);
+    }
+
+    const user = optionalUser;
+    if (!user) return error("Authentication required.", 401);
     if (request.method === "POST" && path.length === 1 && path[0] === "characters") {
       await enforceRateLimit(request, env, `publish:${user.id}`, 10, 3600);
       return publishCharacter(request, env, user);
     }
     if (path[0] === "characters" && path[1]) {
-      if (request.method === "GET" && path.length === 2) return characterDetail(env, user, path[1]);
       if (request.method === "DELETE" && path.length === 2) return deleteCharacter(env, user, path[1]);
       if (request.method === "POST" && path[2] === "favorite") return toggleFavorite(env, user, path[1]);
       if (request.method === "POST" && path[2] === "report") return reportCharacter(request, env, user, path[1]);
@@ -152,7 +155,7 @@ async function authenticate(request: Request, env: Env): Promise<User | null> {
   ).bind(await sha256(auth.slice(7))).first<User>();
 }
 
-async function listCharacters(request: Request, env: Env, user: User): Promise<Response> {
+async function listCharacters(request: Request, env: Env, user: User | null): Promise<Response> {
   const url = new URL(request.url);
   const query = (url.searchParams.get("q") || "").trim().slice(0, 80);
   const tag = (url.searchParams.get("tag") || "").trim().slice(0, 40);
@@ -173,19 +176,19 @@ async function listCharacters(request: Request, env: Env, user: User): Promise<R
       AND (? = '' OR c.tags_json LIKE ? ESCAPE '\\')
       AND (? = 1 OR c.nsfw = 0)
     ORDER BY c.updated_at DESC LIMIT ?
-  `).bind(user.id, cursor, query, like, like, tag, tagLike, nsfw ? 1 : 0, limit).all<Record<string, unknown>>();
+  `).bind(user?.id || "", cursor, query, like, like, tag, tagLike, nsfw ? 1 : 0, limit).all<Record<string, unknown>>();
   const items = result.results.map(publicCharacter);
   const nextCursor = items.length === limit ? items[items.length - 1].updatedAt : null;
   return json({ items, nextCursor }, 200, "private, max-age=30");
 }
 
-async function characterDetail(env: Env, user: User, id: string): Promise<Response> {
+async function characterDetail(env: Env, user: User | null, id: string): Promise<Response> {
   const row = await env.DB.prepare(`
     SELECT c.*, u.username, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS viewer_favorite
     FROM characters c JOIN users u ON u.id = c.owner_id
     LEFT JOIN favorites f ON f.character_id = c.id AND f.user_id = ?
     WHERE c.id = ? AND c.deleted_at IS NULL AND (c.visibility = 'public' OR c.owner_id = ?)
-  `).bind(user.id, id, user.id).first<Record<string, unknown>>();
+  `).bind(user?.id || "", id, user?.id || "").first<Record<string, unknown>>();
   if (!row) return error("Character not found.", 404);
   return json({
     id: row.id,

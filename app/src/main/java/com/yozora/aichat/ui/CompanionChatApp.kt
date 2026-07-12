@@ -238,7 +238,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 
 private const val APP_VERSION_NAME = "2.2.4"
-private const val APP_VERSION_CODE = 227
+private const val APP_VERSION_CODE = 228
 
 private fun Context.applyLanguageOverride(languageCode: String) {
     val locale = Locale.forLanguageTag(if (languageCode == "vi") "vi" else "en")
@@ -8016,12 +8016,7 @@ private fun DiscoverScreen(
     var selectedTag by remember { mutableStateOf("All Tags") }
     var actionTarget by remember { mutableStateOf<ChatSession?>(null) }
     var detailTarget by remember { mutableStateOf<PresetCharacter?>(null) }
-    var communityVisible by remember { mutableStateOf(false) }
-
-    if (communityVisible) {
-        CommunityHubScreen(viewModel = viewModel, onBack = { communityVisible = false })
-        return
-    }
+    var communitySource by remember { mutableStateOf(false) }
 
     val customCharacters = viewModel.sessions.filter { session ->
         session.persona.displayName.isNotBlank()
@@ -8100,11 +8095,6 @@ private fun DiscoverScreen(
                     fontFamily = FontFamily.SansSerif
                 )
             )
-            TextButton(onClick = { communityVisible = true }) {
-                Icon(Icons.Rounded.Public, contentDescription = null, tint = LocalRoleplayColors.current.accent)
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Community", color = LocalRoleplayColors.current.accent, fontWeight = FontWeight.Bold)
-            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8129,6 +8119,45 @@ private fun DiscoverScreen(
         )
 
         Spacer(modifier = Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(false to "Your AI", true to "Community").forEach { (community, label) ->
+                val selected = communitySource == community
+                Surface(
+                    color = if (selected) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.surface,
+                    shape = RoundedCornerShape(8.dp),
+                    border = if (selected) null else BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { communitySource = community }
+                ) {
+                    Text(
+                        label,
+                        color = if (selected) Color.White else LocalRoleplayColors.current.textSecondary,
+                        textAlign = TextAlign.Center,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        modifier = Modifier.padding(vertical = 9.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (communitySource) {
+            CommunityDiscoverPane(
+                viewModel = viewModel,
+                searchQuery = searchQuery,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            )
+        } else {
 
         // Tags List
         LazyRow(
@@ -8247,6 +8276,7 @@ private fun DiscoverScreen(
                 )
             }
         }
+        }
     }
 
     actionTarget?.let { session ->
@@ -8352,6 +8382,116 @@ private fun DiscoverScreen(
                     detailTarget = null
                 }
             }
+        )
+    }
+}
+
+@Composable
+private fun CommunityDiscoverPane(
+    viewModel: ChatViewModel,
+    searchQuery: String,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var registerVisible by remember { mutableStateOf(false) }
+    var username by remember { mutableStateOf("") }
+    var inviteCode by remember { mutableStateOf("") }
+    var recoveryCode by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(searchQuery, viewModel.hubUsername) {
+        delay(400)
+        viewModel.refreshHubCharacters(searchQuery)
+    }
+    LaunchedEffect(viewModel.hubMessage) {
+        viewModel.hubMessage?.let {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show()
+            viewModel.clearHubMessage()
+        }
+    }
+
+    Column(modifier = modifier.padding(horizontal = 16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                viewModel.hubUsername?.let { "Publishing as @$it" } ?: "Browse and download without an account",
+                color = LocalRoleplayColors.current.textSecondary,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f)
+            )
+            if (viewModel.hubUsername == null) {
+                TextButton(onClick = { registerVisible = true }) {
+                    Text("Register to publish", color = LocalRoleplayColors.current.accent, fontWeight = FontWeight.Bold)
+                }
+            } else {
+                IconButton(onClick = { viewModel.refreshHubCharacters(searchQuery) }) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = "Refresh", tint = LocalRoleplayColors.current.accent)
+                }
+            }
+        }
+
+        if (viewModel.hubLoading && viewModel.hubCharacters.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = LocalRoleplayColors.current.accent)
+            }
+        } else if (viewModel.hubCharacters.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No shared characters found.", color = LocalRoleplayColors.current.textSecondary)
+            }
+        } else {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 20.dp)
+            ) {
+                items(viewModel.hubCharacters, key = { it.id }) { character ->
+                    CommunityCharacterRow(character = character, onImport = { viewModel.importHubCharacter(character.id) })
+                }
+            }
+        }
+    }
+
+    if (registerVisible) {
+        AlertDialog(
+            onDismissRequest = { if (!viewModel.hubLoading) registerVisible = false },
+            title = { Text("Register to publish") },
+            text = {
+                Column {
+                    Text("Browsing and downloading stay public. Registration is only for publishing and managing your uploads.")
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it.take(24) },
+                        label = { Text("Username") },
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = inviteCode,
+                        onValueChange = { inviteCode = it.trim() },
+                        label = { Text("Invite code") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = username.length >= 3 && inviteCode.isNotBlank() && !viewModel.hubLoading,
+                    onClick = {
+                        viewModel.registerHub(username, inviteCode) { code ->
+                            recoveryCode = code
+                            registerVisible = false
+                        }
+                    }
+                ) { Text("Register") }
+            },
+            dismissButton = { TextButton(onClick = { registerVisible = false }) { Text("Cancel") } }
+        )
+    }
+
+    recoveryCode?.let { code ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Save your recovery code") },
+            text = { Text("This is shown once. Keep it somewhere private:\n\n$code") },
+            confirmButton = { TextButton(onClick = { recoveryCode = null }) { Text("I saved it") } }
         )
     }
 }

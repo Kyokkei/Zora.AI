@@ -13,7 +13,7 @@ android {
         applicationId = "com.yozora.aichat"
         minSdk = 26
         targetSdk = 35
-        versionCode = 227
+        versionCode = 228
         versionName = "2.2.4"
 
         vectorDrawables {
