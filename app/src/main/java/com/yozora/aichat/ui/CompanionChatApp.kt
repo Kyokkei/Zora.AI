@@ -196,6 +196,7 @@ import com.yozora.aichat.ui.chat.AppUpdateState
 import com.yozora.aichat.ui.chat.AppIconChoice
 import com.yozora.aichat.ui.chat.AppNameChoice
 import com.yozora.aichat.ui.chat.ApiVendor
+import com.yozora.aichat.ui.chat.BubbleGlassMode
 import com.yozora.aichat.ui.chat.ChatBackground
 import com.yozora.aichat.ui.chat.ChatMessage
 import com.yozora.aichat.ui.chat.ChatSession
@@ -279,6 +280,9 @@ fun CompanionChatApp(
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(viewModel.languageCode) {
         context.applyLanguageOverride(viewModel.languageCode)
+    }
+    LaunchedEffect(viewModel.roleplayUiModeEnabled, viewModel.roleplayOnboardingCompleted) {
+        viewModel.showRoleplayOnboardingIfNeeded()
     }
     DisposableEffect(lifecycleOwner, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
@@ -429,6 +433,8 @@ fun CompanionChatApp(
                     sessionHeaderAvatarOffsetX = viewModel.sessionHeaderAvatarOffsetX,
                     sessionHeaderAvatarOffsetY = viewModel.sessionHeaderAvatarOffsetY,
                     background = viewModel.background,
+                    bubbleGlassMode = viewModel.effectiveBubbleGlassMode,
+                    roleplayLightMode = viewModel.roleplayLightModeEnabled,
                     messages = viewModel.messages,
                     draft = viewModel.draft,
                     isOnline = viewModel.activeApiKeyLabel != null,
@@ -493,6 +499,8 @@ fun CompanionChatApp(
                 sessionHeaderAvatarOffsetX = viewModel.sessionHeaderAvatarOffsetX,
                 sessionHeaderAvatarOffsetY = viewModel.sessionHeaderAvatarOffsetY,
                 background = viewModel.background,
+                bubbleGlassMode = BubbleGlassMode.Off,
+                roleplayLightMode = false,
                 messages = viewModel.messages,
                 draft = viewModel.draft,
                 isOnline = viewModel.activeApiKeyLabel != null,
@@ -656,6 +664,7 @@ fun CompanionChatApp(
                 levelSystemEnabled = viewModel.levelSystemEnabled,
                 levelXp = viewModel.levelXp,
                 background = viewModel.background,
+                bubbleGlassOverride = viewModel.sessionBubbleGlassOverride,
                 moreOptions = viewModel.morePersonaOptions,
                 activeApiKeyLabel = viewModel.activeApiKeyLabel,
                 tavilyApiKeyLabel = viewModel.tavilyApiKeyLabel,
@@ -696,6 +705,7 @@ fun CompanionChatApp(
                 onSessionHeaderAvatarChange = viewModel::updateSessionHeaderAvatar,
                 onSessionHeaderAvatarTransform = viewModel::transformSessionHeaderAvatar,
                 onBackgroundChange = viewModel::updateBackground,
+                onBubbleGlassOverrideChange = viewModel::updateSessionBubbleGlassOverride,
                 onCustomBackgroundChange = viewModel::updateCustomBackground,
                 onToggleMore = viewModel::toggleMorePersonaOptions,
                 onEditApiKey = viewModel::openApiKeyDialog,
@@ -801,13 +811,17 @@ fun CompanionChatApp(
         )
     }
 
-    viewModel.importPreviewState?.let { preview ->
+    viewModel.importPreviewState?.takeUnless { it.sourceKind == "Community" }?.let { preview ->
         ImportPreviewSheet(
             state = preview,
             onDismiss = viewModel::dismissImportPreview,
             onImport = { viewModel.confirmImportPreview(asCopy = false) },
             onImportAsCopy = { viewModel.confirmImportPreview(asCopy = true) }
         )
+    }
+
+    if (viewModel.roleplayOnboardingVisible) {
+        RoleplayOnboardingPager(onFinish = viewModel::completeRoleplayOnboarding)
     }
 
     if (aboutDialogVisible) {
@@ -845,6 +859,8 @@ private fun ChatScreen(
     sessionHeaderAvatarOffsetX: Float,
     sessionHeaderAvatarOffsetY: Float,
     background: ChatBackground,
+    bubbleGlassMode: BubbleGlassMode,
+    roleplayLightMode: Boolean,
     messages: List<ChatMessage>,
     draft: String,
     isOnline: Boolean,
@@ -1032,6 +1048,9 @@ private fun ChatScreen(
                             compactTop = sameAsOlder,
                             compactBottom = sameAsNewer,
                             actionsVisible = inlineActionMessageId == message.id,
+                            bubbleGlassMode = bubbleGlassMode,
+                            isRoleplayMode = isRoleplayMode,
+                            roleplayLightMode = roleplayLightMode,
                             animateText = message.id == newestTextModelMessageId &&
                                 message.id !in startedTypewriterMessageIds,
                             onTextAnimationStart = { startedTypewriterMessageIds += it },
@@ -3107,6 +3126,9 @@ private fun AnimatedMessageBubble(
     compactTop: Boolean,
     compactBottom: Boolean,
     actionsVisible: Boolean,
+    bubbleGlassMode: BubbleGlassMode,
+    isRoleplayMode: Boolean,
+    roleplayLightMode: Boolean,
     animateText: Boolean,
     onTextAnimationStart: (String) -> Unit,
     onClick: () -> Unit,
@@ -3160,6 +3182,9 @@ private fun AnimatedMessageBubble(
             compactTop = compactTop,
             compactBottom = compactBottom,
             actionsVisible = actionsVisible,
+            bubbleGlassMode = bubbleGlassMode,
+            isRoleplayMode = isRoleplayMode,
+            roleplayLightMode = roleplayLightMode,
             onClick = onClick,
             onOpenImage = onOpenImage,
             onMessageLongPress = onMessageLongPress,
@@ -3183,6 +3208,9 @@ private fun MessageBubble(
     compactTop: Boolean,
     compactBottom: Boolean,
     actionsVisible: Boolean,
+    bubbleGlassMode: BubbleGlassMode,
+    isRoleplayMode: Boolean,
+    roleplayLightMode: Boolean,
     onClick: () -> Unit,
     onOpenImage: (android.net.Uri) -> Unit,
     onMessageLongPress: (ChatMessage) -> Unit,
@@ -3195,6 +3223,19 @@ private fun MessageBubble(
     val speakerPersona = if (isUser) persona else groupMembers.firstOrNull { it.id == message.speakerId }?.persona ?: persona
     val topRadius = if (compactTop) 12.dp else 22.dp
     val bottomRadius = if (compactBottom) 12.dp else 22.dp
+    val glassEnabled = isRoleplayMode && bubbleGlassMode.appliesTo(isUser)
+    val bubbleColor = when {
+        glassEnabled && isUser -> AppAccentDim.copy(alpha = if (roleplayLightMode) 0.24f else 0.34f)
+        glassEnabled -> AppSurface2.copy(alpha = if (roleplayLightMode) 0.46f else 0.38f)
+        isUser -> AppAccentDim.copy(alpha = 0.95f)
+        else -> AppSurface2.copy(alpha = 0.96f)
+    }
+    val bubbleBorder = when {
+        glassEnabled && isUser -> BorderStroke(1.dp, Color.White.copy(alpha = 0.30f))
+        glassEnabled -> BorderStroke(1.dp, Color.White.copy(alpha = if (roleplayLightMode) 0.48f else 0.22f))
+        isUser -> BorderStroke(1.dp, AppAccent.copy(alpha = 0.2f))
+        else -> BorderStroke(1.dp, AppStroke.copy(alpha = 0.62f))
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -3218,13 +3259,9 @@ private fun MessageBubble(
                     bottomStart = if (isUser) bottomRadius else if (compactBottom) 12.dp else 6.dp,
                     bottomEnd = if (isUser) if (compactBottom) 12.dp else 6.dp else bottomRadius
                 ),
-                color = if (isUser) AppAccentDim.copy(alpha = 0.95f) else AppSurface2.copy(alpha = 0.96f),
-                border = if (isUser) {
-                    BorderStroke(1.dp, AppAccent.copy(alpha = 0.2f))
-                } else {
-                    BorderStroke(1.dp, AppStroke.copy(alpha = 0.62f))
-                },
-                shadowElevation = if (compactTop || compactBottom) 1.dp else 3.dp,
+                color = bubbleColor,
+                border = bubbleBorder,
+                shadowElevation = if (glassEnabled) 1.dp else if (compactTop || compactBottom) 1.dp else 3.dp,
                 modifier = Modifier
                     .fillMaxWidth(if (isUser) 0.82f else 0.9f)
                     .combinedClickable(
@@ -3281,6 +3318,8 @@ private fun MessageBubble(
                     if (showText) {
                         MarkdownContent(
                             input = displayContent,
+                            semanticRoleplay = isRoleplayMode && !isUser,
+                            roleplayLightMode = roleplayLightMode,
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -4802,6 +4841,8 @@ private fun AttachedImageChip(
 @Composable
 private fun MarkdownContent(
     input: String,
+    semanticRoleplay: Boolean = false,
+    roleplayLightMode: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val blocks = remember(input) { parseMarkdownBlocks(input) }
@@ -4813,7 +4854,11 @@ private fun MarkdownContent(
             when (block) {
                 is MarkdownBlock.Paragraph -> {
                     Text(
-                        text = formatMarkdownLite(block.text),
+                        text = if (semanticRoleplay) {
+                            formatRoleplayMessage(block.text, roleplayLightMode)
+                        } else {
+                            formatMarkdownLite(block.text)
+                        },
                         style = MaterialTheme.typography.bodyLarge,
                         color = AppTextPrimary,
                         lineHeight = MaterialTheme.typography.bodyLarge.lineHeight
@@ -5027,6 +5072,7 @@ private fun PersonaSettingsSheet(
     levelSystemEnabled: Boolean,
     levelXp: Int,
     background: ChatBackground,
+    bubbleGlassOverride: BubbleGlassMode?,
     moreOptions: Boolean,
     activeApiKeyLabel: String?,
     tavilyApiKeyLabel: String?,
@@ -5067,6 +5113,7 @@ private fun PersonaSettingsSheet(
     onSessionHeaderAvatarChange: (android.net.Uri?) -> Unit,
     onSessionHeaderAvatarTransform: (Float, Float, Float) -> Unit,
     onBackgroundChange: (ChatBackground) -> Unit,
+    onBubbleGlassOverrideChange: (BubbleGlassMode?) -> Unit,
     onCustomBackgroundChange: (android.net.Uri?) -> Unit,
     onToggleMore: () -> Unit,
     onEditApiKey: () -> Unit,
@@ -5195,6 +5242,25 @@ private fun PersonaSettingsSheet(
                 }
 
                 PersonaSettingsSection.Ui -> {
+                    Text(
+                        text = "Message bubbles",
+                        color = AppTextPrimary,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(top = 12.dp)
+                    )
+                    Text(
+                        text = "Choose which bubbles use the transparent glass style in this session.",
+                        color = AppTextSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+                    )
+                    BubbleGlassChoice(
+                        selected = bubbleGlassOverride,
+                        includeGlobal = true,
+                        onSelected = onBubbleGlassOverrideChange
+                    )
+                    Spacer(modifier = Modifier.height(18.dp))
+
                     if (showSessionHeaderControls) {
                         Text(
                             text = "Session header",
@@ -7260,6 +7326,99 @@ private fun AppNameChoiceRow(
 }
 
 @Composable
+private fun BubbleGlassChoice(
+    selected: BubbleGlassMode?,
+    includeGlobal: Boolean,
+    onSelected: (BubbleGlassMode?) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val choices = buildList<Pair<String, BubbleGlassMode?>> {
+        if (includeGlobal) add("Global" to null)
+        add("Off" to BubbleGlassMode.Off)
+        add("User" to BubbleGlassMode.User)
+        add("AI" to BubbleGlassMode.Ai)
+        add("Both" to BubbleGlassMode.Both)
+    }
+    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        choices.forEach { (label, mode) ->
+            val active = selected == mode
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = if (active) AppAccentDim else AppSurface,
+                border = BorderStroke(1.dp, if (active) AppAccent else AppStroke),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(42.dp)
+                    .clickable { onSelected(mode) }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = label,
+                        color = if (active) AppAccentSoft else AppTextSecondary,
+                        style = MaterialTheme.typography.labelMedium,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatRoleplayMessage(input: String, lightMode: Boolean): AnnotatedString {
+    val speechColor = Color(0xFFFF5D8F)
+    val actionColor = if (lightMode) Color(0xFF1677C8) else Color(0xFF55B7FF)
+    val thoughtColor = if (lightMode) Color(0xFF17131A) else AppTextPrimary
+    return buildAnnotatedString {
+        var index = 0
+        var plainStart = 0
+
+        fun appendSegment(start: Int, end: Int, style: SpanStyle) {
+            if (end <= start) return
+            withStyle(style) { append(formatMarkdownLite(input.substring(start, end))) }
+        }
+
+        fun flushPlain(end: Int) {
+            appendSegment(plainStart, end, SpanStyle(color = speechColor))
+        }
+
+        while (index < input.length) {
+            val delimiter = input[index]
+            val isAction = delimiter == '*' &&
+                !input.startsWith("**", index) &&
+                (index == 0 || input[index - 1] != '*')
+            val isThought = delimiter == '('
+            val isQuote = delimiter == '"'
+            if (!isAction && !isThought && !isQuote) {
+                index++
+                continue
+            }
+
+            val closing = when {
+                isAction -> input.indexOf('*', index + 1)
+                isThought -> input.indexOf(')', index + 1)
+                else -> input.indexOf('"', index + 1)
+            }
+            if (closing <= index + 1) {
+                index++
+                continue
+            }
+
+            flushPlain(index)
+            val style = when {
+                isAction -> SpanStyle(color = actionColor, fontStyle = FontStyle.Italic)
+                isThought -> SpanStyle(color = thoughtColor)
+                else -> SpanStyle(color = speechColor)
+            }
+            appendSegment(index, closing + 1, style)
+            index = closing + 1
+            plainStart = index
+        }
+        flushPlain(input.length)
+    }
+}
+
+@Composable
 private fun AppIconChoiceRow(
     choice: AppIconChoice,
     selected: Boolean,
@@ -8401,6 +8560,7 @@ private fun CommunityDiscoverPane(
     val coroutineScope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
     var signInVisible by remember { mutableStateOf(false) }
+    var selectedCharacter by remember { mutableStateOf<HubCharacter?>(null) }
 
     fun beginGoogleSignIn() {
         val clientId = context.getString(R.string.google_web_client_id)
@@ -8481,7 +8641,7 @@ private fun CommunityDiscoverPane(
                 contentPadding = PaddingValues(bottom = 20.dp)
             ) {
                 items(viewModel.hubCharacters, key = { it.id }) { character ->
-                    CommunityCharacterRow(character = character, onImport = { viewModel.importHubCharacter(character.id) })
+                    CommunityCharacterRow(character = character, onOpen = { selectedCharacter = character })
                 }
             }
         }
@@ -8507,21 +8667,46 @@ private fun CommunityDiscoverPane(
             dismissButton = { TextButton(onClick = { signInVisible = false }) { Text("Cancel") } }
         )
     }
+
+
+    selectedCharacter?.let { character ->
+        val preview = viewModel.importPreviewState?.takeIf { it.sourceKind == "Community" }
+        CommunityCharacterDetailSheet(
+            character = character,
+            isImporting = viewModel.hubLoading,
+            preview = preview,
+            onDismiss = {
+                if (!viewModel.hubLoading) {
+                    viewModel.dismissImportPreview()
+                    selectedCharacter = null
+                }
+            },
+            onDownload = { viewModel.importHubCharacter(character.id) },
+            onConfirmImport = {
+                viewModel.confirmImportPreview(asCopy = false)
+                selectedCharacter = null
+            },
+            onConfirmCopy = {
+                viewModel.confirmImportPreview(asCopy = true)
+                selectedCharacter = null
+            }
+        )
+    }
 }
 
 @Composable
-private fun CommunityCharacterRow(character: HubCharacter, onImport: () -> Unit) {
+private fun CommunityCharacterRow(character: HubCharacter, onOpen: () -> Unit) {
     Surface(
         color = LocalRoleplayColors.current.surface,
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)
     ) {
         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(shape = RoundedCornerShape(6.dp), color = LocalRoleplayColors.current.surface2, modifier = Modifier.size(72.dp)) {
                 if (character.avatarUrl != null) {
                     Image(
-                        painter = rememberAsyncImagePainter("https://zora-hub.pages.dev${character.avatarUrl}"),
+                        painter = rememberAsyncImagePainter(hubImageUrl(character.avatarUrl)),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
@@ -8535,8 +8720,119 @@ private fun CommunityCharacterRow(character: HubCharacter, onImport: () -> Unit)
                 Text("@${character.author}", color = LocalRoleplayColors.current.textSecondary, style = MaterialTheme.typography.bodySmall)
                 Text(character.tagline, color = LocalRoleplayColors.current.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = onImport) {
-                Icon(Icons.Rounded.FileOpen, contentDescription = "Preview import", tint = LocalRoleplayColors.current.accent)
+            Icon(Icons.Rounded.FileOpen, contentDescription = "Open character", tint = LocalRoleplayColors.current.accent)
+        }
+    }
+}
+
+private fun hubImageUrl(path: String?): String? = path?.let {
+    if (it.startsWith("http://") || it.startsWith("https://")) it else "https://zora-hub.pages.dev$it"
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CommunityCharacterDetailSheet(
+    character: HubCharacter,
+    isImporting: Boolean,
+    preview: ImportPreviewState?,
+    onDismiss: () -> Unit,
+    onDownload: () -> Unit,
+    onConfirmImport: () -> Unit,
+    onConfirmCopy: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.54f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        Surface(
+            color = LocalRoleplayColors.current.surface,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+            modifier = Modifier.fillMaxWidth().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+        ) {
+            Column(
+                modifier = Modifier.navigationBarsPadding().verticalScroll(rememberScrollState()).padding(20.dp)
+            ) {
+                Box(modifier = Modifier.align(Alignment.CenterHorizontally).size(42.dp, 4.dp).clip(CircleShape).background(LocalRoleplayColors.current.stroke))
+                Row(modifier = Modifier.padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(shape = RoundedCornerShape(20.dp), color = LocalRoleplayColors.current.surface2, modifier = Modifier.size(104.dp)) {
+                        val avatar = hubImageUrl(character.avatarUrl)
+                        if (avatar != null) {
+                            Image(painter = rememberAsyncImagePainter(avatar), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        } else {
+                            Box(contentAlignment = Alignment.Center) { Text(character.displayName.take(1).uppercase(), color = LocalRoleplayColors.current.accent, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold) }
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f).padding(start = 16.dp)) {
+                        Text(character.displayName, color = LocalRoleplayColors.current.textPrimary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text("@${character.author}", color = LocalRoleplayColors.current.textSecondary, style = MaterialTheme.typography.bodyLarge)
+                        if (character.favorites > 0) Text("${character.favorites} favorites", color = LocalRoleplayColors.current.accent, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+                hubImageUrl(character.backgroundUrl)?.let { backgroundUrl ->
+                    Image(
+                        painter = rememberAsyncImagePainter(backgroundUrl),
+                        contentDescription = "Character background",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxWidth().height(132.dp).padding(top = 16.dp).clip(RoundedCornerShape(14.dp))
+                    )
+                }
+                if (character.tags.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 18.dp)) {
+                        character.tags.take(12).forEach { tag ->
+                            Surface(color = LocalRoleplayColors.current.accent.copy(alpha = 0.14f), shape = RoundedCornerShape(999.dp), border = BorderStroke(1.dp, LocalRoleplayColors.current.accent.copy(alpha = 0.3f))) {
+                                Text(tag, color = LocalRoleplayColors.current.accent, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp))
+                            }
+                        }
+                    }
+                }
+                if (character.tagline.isNotBlank()) Text(character.tagline, color = LocalRoleplayColors.current.textPrimary, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 18.dp))
+                if (character.description.isNotBlank()) Text(character.description, color = LocalRoleplayColors.current.textSecondary, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 10.dp))
+                preview?.duplicateWarning?.let { warning ->
+                    Surface(
+                        color = Color(0xFFFFB84D).copy(alpha = 0.13f),
+                        border = BorderStroke(1.dp, Color(0xFFFFB84D).copy(alpha = 0.52f)),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
+                    ) {
+                        Text(warning, color = Color(0xFFFFC66D), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(14.dp))
+                    }
+                }
+                if (preview != null) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(52.dp)) { Text("Cancel") }
+                        if (preview.duplicateWarning != null) {
+                            OutlinedButton(onClick = onConfirmCopy, modifier = Modifier.weight(1f).height(52.dp)) { Text("Import copy", textAlign = TextAlign.Center) }
+                        }
+                    }
+                    Button(
+                        onClick = onConfirmImport,
+                        colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.accent),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(54.dp).padding(top = 2.dp)
+                    ) { Text("Import", fontWeight = FontWeight.Bold) }
+                } else {
+                    Button(
+                        onClick = onDownload,
+                        enabled = !isImporting,
+                        colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.accent),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(54.dp).padding(top = 2.dp)
+                    ) {
+                        if (isImporting) {
+                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Downloading...")
+                        } else {
+                            Icon(Icons.Rounded.FileOpen, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Import character", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
             }
         }
     }
@@ -10510,6 +10806,88 @@ private fun UserProfileScreen(
         }
     }
 }
+private data class OnboardingPage(
+    val icon: ImageVector,
+    val title: String,
+    val body: String
+)
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun RoleplayOnboardingPager(onFinish: () -> Unit) {
+    val pages = listOf(
+        OnboardingPage(Icons.Rounded.Shield, stringResource(R.string.onboarding_private_title), stringResource(R.string.onboarding_private_body)),
+        OnboardingPage(Icons.Rounded.Public, stringResource(R.string.onboarding_discover_title), stringResource(R.string.onboarding_discover_body)),
+        OnboardingPage(Icons.Rounded.AutoAwesome, stringResource(R.string.onboarding_create_title), stringResource(R.string.onboarding_create_body)),
+        OnboardingPage(Icons.Rounded.ChatBubbleOutline, stringResource(R.string.onboarding_chat_title), stringResource(R.string.onboarding_chat_body))
+    )
+    val pagerState = rememberPagerState(pageCount = { pages.size })
+    val scope = rememberCoroutineScope()
+    Surface(modifier = Modifier.fillMaxSize(), color = LocalRoleplayColors.current.background) {
+        Column(
+            modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onFinish) { Text(stringResource(R.string.onboarding_skip), color = LocalRoleplayColors.current.textSecondary) }
+            }
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.weight(1f).fillMaxWidth()
+            ) { pageIndex ->
+                val page = pages[pageIndex]
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = LocalRoleplayColors.current.accent.copy(alpha = 0.14f),
+                        modifier = Modifier.size(104.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(page.icon, contentDescription = null, tint = LocalRoleplayColors.current.accent, modifier = Modifier.size(48.dp))
+                        }
+                    }
+                    Text(page.title, color = LocalRoleplayColors.current.textPrimary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 28.dp))
+                    Text(page.body, color = LocalRoleplayColors.current.textSecondary, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(
+                    enabled = pagerState.currentPage > 0,
+                    onClick = { scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) } },
+                    modifier = Modifier.width(72.dp)
+                ) { Text(stringResource(R.string.onboarding_back)) }
+                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center) {
+                    pages.indices.forEach { index ->
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 4.dp)
+                                .size(if (pagerState.currentPage == index) 22.dp else 8.dp, 8.dp)
+                                .clip(CircleShape)
+                                .background(if (pagerState.currentPage == index) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.stroke)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(72.dp))
+            }
+            Button(
+                onClick = {
+                    if (pagerState.currentPage == pages.lastIndex) onFinish()
+                    else scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.accent),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp)
+            ) {
+                Text(if (pagerState.currentPage == pages.lastIndex) stringResource(R.string.onboarding_start) else stringResource(R.string.onboarding_next), color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
 @Composable
 private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
     var showProfileScreen by remember { mutableStateOf(false) }
@@ -10583,6 +10961,22 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
             color = LocalRoleplayColors.current.surface,
             shape = RoundedCornerShape(16.dp),
             border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).clickable { viewModel.replayRoleplayOnboarding() }
+        ) {
+            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Info, contentDescription = null, tint = LocalRoleplayColors.current.accent)
+                Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(stringResource(R.string.onboarding_replay_title), color = LocalRoleplayColors.current.textPrimary, style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.onboarding_replay_body), color = LocalRoleplayColors.current.textSecondary, style = MaterialTheme.typography.bodyMedium)
+                }
+                Text(">", color = LocalRoleplayColors.current.textSecondary, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Surface(
+            color = LocalRoleplayColors.current.surface,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -10605,6 +10999,32 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
                         onCheckedChange = { viewModel.updateRoleplayLightModeEnabled(it) }
                     )
                 }
+            }
+        }
+
+        Surface(
+            color = LocalRoleplayColors.current.surface,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Liquid glass bubbles",
+                    color = LocalRoleplayColors.current.textPrimary,
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Text(
+                    text = "Global default for transparent chat bubbles.",
+                    color = LocalRoleplayColors.current.textSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = 3.dp, bottom = 12.dp)
+                )
+                BubbleGlassChoice(
+                    selected = viewModel.roleplayBubbleGlassMode,
+                    includeGlobal = false,
+                    onSelected = { mode -> mode?.let(viewModel::updateRoleplayBubbleGlassMode) }
+                )
             }
         }
 

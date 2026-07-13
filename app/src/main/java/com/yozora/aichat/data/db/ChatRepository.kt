@@ -3,6 +3,7 @@ package com.yozora.aichat.data.db
 import android.content.Context
 import android.net.Uri
 import com.yozora.aichat.ui.chat.ApiVendor
+import com.yozora.aichat.ui.chat.BubbleGlassMode
 import com.yozora.aichat.ui.chat.ChatBackground
 import com.yozora.aichat.ui.chat.ChatMessage
 import com.yozora.aichat.ui.chat.ChatSession
@@ -63,6 +64,9 @@ class ChatRepository private constructor(
                 draft = sessionEntity.draft,
                 isFavorite = sessionEntity.isFavorite,
                 pinnedAtMillis = sessionEntity.pinnedAtMillis,
+                bubbleGlassOverride = sessionEntity.bubbleGlassOverride?.let { stored ->
+                    BubbleGlassMode.entries.firstOrNull { it.name == stored }
+                },
                 messages = dao.messagesForSession(sessionEntity.id).map { it.toChatMessage() }
             )
         }
@@ -95,7 +99,8 @@ class ChatRepository private constructor(
                 sortOrder = index,
                 draft = session.draft,
                 isFavorite = session.isFavorite,
-                pinnedAtMillis = session.pinnedAtMillis
+                pinnedAtMillis = session.pinnedAtMillis,
+                bubbleGlassOverride = session.bubbleGlassOverride?.name
             )
         }
         val memberEntities = sessions.flatMap { session ->

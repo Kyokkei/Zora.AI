@@ -290,6 +290,7 @@ data class ChatSession(
     val draft: String = "",
     val isFavorite: Boolean = false,
     val pinnedAtMillis: Long? = null,
+    val bubbleGlassOverride: BubbleGlassMode? = null,
     val messages: List<ChatMessage> = emptyList()
 )
 
@@ -302,6 +303,20 @@ sealed class ChatBackground {
     data object PresetBlack : ChatBackground()
     data object PresetWhite : ChatBackground()
     data class CustomImage(val uri: Uri) : ChatBackground()
+}
+
+enum class BubbleGlassMode {
+    Off,
+    User,
+    Ai,
+    Both;
+
+    fun appliesTo(isUser: Boolean): Boolean = when (this) {
+        Off -> false
+        User -> isUser
+        Ai -> !isUser
+        Both -> true
+    }
 }
 
 data class PersonaUiState(
@@ -469,6 +484,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val summarizerSeparateKeyKey = booleanPreferencesKey("summarizer_use_separate_key")
     private val roleplayUiModeEnabledKey = booleanPreferencesKey("roleplay_ui_mode_enabled_v2")
     private val roleplayLightModeKey = booleanPreferencesKey("roleplay_light_mode_enabled_v1")
+    private val roleplayBubbleGlassModeKey = stringPreferencesKey("roleplay_bubble_glass_mode_v1")
+    private val roleplayOnboardingCompletedKey = booleanPreferencesKey("roleplay_onboarding_completed_v1")
     private val levelSystemMigratedKey = booleanPreferencesKey("level_system_migrated_v1")
     private var restoringState = false
     private val persistMutex = Mutex()
@@ -644,6 +661,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     var roleplayLightModeEnabled by mutableStateOf(false)
         private set
 
+    var roleplayBubbleGlassMode by mutableStateOf(BubbleGlassMode.Off)
+        private set
+
+    var roleplayOnboardingCompleted by mutableStateOf(false)
+        private set
+
+    var roleplayOnboardingVisible by mutableStateOf(false)
+        private set
+
     var languageCode by mutableStateOf("en")
         private set
 
@@ -716,6 +742,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val background: ChatBackground
         get() = activeSession.background
 
+    val effectiveBubbleGlassMode: BubbleGlassMode
+        get() = activeSession.bubbleGlassOverride ?: roleplayBubbleGlassMode
+
+    val sessionBubbleGlassOverride: BubbleGlassMode?
+        get() = activeSession.bubbleGlassOverride
+
     val isSending: Boolean
         get() = sendingSessionId == activeSessionId
 
@@ -784,6 +816,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 summarizerUsesSeparateKey = preferences[summarizerSeparateKeyKey] ?: false
                 roleplayUiModeEnabled = preferences[roleplayUiModeEnabledKey] ?: false
                 roleplayLightModeEnabled = preferences[roleplayLightModeKey] ?: false
+                roleplayBubbleGlassMode = preferences[roleplayBubbleGlassModeKey]
+                    ?.let { stored -> BubbleGlassMode.entries.firstOrNull { it.name == stored } }
+                    ?: BubbleGlassMode.Off
+                roleplayOnboardingCompleted = preferences[roleplayOnboardingCompletedKey] ?: false
                 languageCode = preferences[languageCodeKey] ?: "en"
                 hubToken = preferences[hubTokenKey]
                 hubUsername = preferences[hubUsernameKey]
@@ -2788,7 +2824,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     detail.optNullableString("backgroundUrl")?.let { path ->
                         config.put("backgroundBase64", android.util.Base64.encodeToString(hubDownload(path, hubToken), android.util.Base64.NO_WRAP))
                     }
-                    buildImportPreview(parseConfigShareJson(getApplication(), config), "Community")
+                    buildImportPreview(
+                        parseConfigShareJson(getApplication(), config).copy(bubbleGlassOverride = null),
+                        "Community"
+                    )
                 }
             }
             result.onSuccess { importPreviewState = it }
@@ -3393,6 +3432,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateRoleplayBubbleGlassMode(value: BubbleGlassMode) {
+        roleplayBubbleGlassMode = value
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsDataStore.edit { preferences ->
+                preferences[roleplayBubbleGlassModeKey] = value.name
+            }
+        }
+    }
+
+    fun updateSessionBubbleGlassOverride(value: BubbleGlassMode?) {
+        updateActiveSession { session -> session.copy(bubbleGlassOverride = value) }
+    }
+
+    fun showRoleplayOnboardingIfNeeded() {
+        if (roleplayUiModeEnabled && !roleplayOnboardingCompleted) roleplayOnboardingVisible = true
+    }
+
+    fun replayRoleplayOnboarding() {
+        roleplayOnboardingVisible = true
+    }
+
+    fun completeRoleplayOnboarding() {
+        roleplayOnboardingVisible = false
+        roleplayOnboardingCompleted = true
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsDataStore.edit { it[roleplayOnboardingCompletedKey] = true }
+        }
+    }
+
     fun updateRoleplayUiModeEnabled(value: Boolean) {
         roleplayUiModeEnabled = value
         viewModelScope.launch(Dispatchers.IO) {
@@ -3863,7 +3931,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             projectInstruction = projectInstructionForSession(currentSession),
             storyLore = currentSession.storyLore,
             archivedContext = currentSession.archivedContext,
-            levelInstruction = levelInstructionForSession(currentSession)
+            levelInstruction = levelInstructionForSession(currentSession),
+            roleplayFormattingEnabled = roleplayUiModeEnabled
         )
     }
 
@@ -5657,6 +5726,7 @@ private fun ChatSession.toJson(): JSONObject {
         .put("draft", draft)
         .put("isFavorite", isFavorite)
         .put("pinnedAtMillis", pinnedAtMillis ?: JSONObject.NULL)
+        .put("bubbleGlassOverride", bubbleGlassOverride?.name ?: JSONObject.NULL)
         .put(
             "messages",
             JSONArray().apply {
@@ -5731,6 +5801,9 @@ private fun JSONObject.toChatSession(): ChatSession {
         draft = optString("draft"),
         isFavorite = optBoolean("isFavorite", false),
         pinnedAtMillis = optNullableLong("pinnedAtMillis"),
+        bubbleGlassOverride = optNullableString("bubbleGlassOverride")?.let { stored ->
+            BubbleGlassMode.entries.firstOrNull { it.name == stored }
+        },
         messages = restoredMessages
     )
 }
@@ -5984,7 +6057,8 @@ private fun PersonaUiState.toEntity(
     projectInstruction: String? = null,
     storyLore: String? = null,
     archivedContext: String? = null,
-    levelInstruction: String? = null
+    levelInstruction: String? = null,
+    roleplayFormattingEnabled: Boolean = false
 ): PersonaEntity {
     val basePrompt = effectiveInstructionPrompt()
     val promptSections = mutableListOf(basePrompt)
@@ -6026,6 +6100,9 @@ private fun PersonaUiState.toEntity(
     }
     if (!levelInstruction.isNullOrBlank()) {
         promptSections += levelInstruction
+    }
+    if (roleplayFormattingEnabled) {
+        promptSections += "For roleplay presentation, put spoken dialogue in double quotes, physical or scene actions inside single asterisks, and fictional in-character private thoughts inside parentheses. Never reveal hidden model reasoning or chain-of-thought."
     }
     return PersonaEntity(
         id = id,

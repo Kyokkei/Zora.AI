@@ -13,7 +13,7 @@ android {
         applicationId = "com.yozora.aichat"
         minSdk = 26
         targetSdk = 35
-        versionCode = 230
+        versionCode = 231
         versionName = "2.2.5"
 
         val googleWebClientId = providers.gradleProperty("ZORA_GOOGLE_WEB_CLIENT_ID")

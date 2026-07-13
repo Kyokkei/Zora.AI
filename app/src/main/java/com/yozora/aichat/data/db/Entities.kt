@@ -40,7 +40,8 @@ data class ChatSessionEntity(
     val sortOrder: Int,
     val draft: String = "",
     val isFavorite: Boolean = false,
-    val pinnedAtMillis: Long? = null
+    val pinnedAtMillis: Long? = null,
+    val bubbleGlassOverride: String? = null
 )
 
 @Entity(

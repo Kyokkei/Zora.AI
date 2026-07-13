@@ -199,4 +199,18 @@
     <string name="error_invalid_export">File này không phải bản xuất hợp lệ của Zora.</string>
     <string name="relationship_xp_active">Hệ thống cấp độ tình cảm đang bật.</string>
     <string name="relationship_xp_inactive">Hệ thống cấp độ tình cảm đang tắt.</string>
+    <string name="onboarding_skip">Bỏ qua</string>
+    <string name="onboarding_back">Quay lại</string>
+    <string name="onboarding_next">Tiếp</string>
+    <string name="onboarding_start">Bắt đầu khám phá</string>
+    <string name="onboarding_private_title">Không gian nhập vai riêng tư</string>
+    <string name="onboarding_private_body">Đoạn chat và khóa API chỉ nằm trên thiết bị này. Duyệt Cộng đồng không cần tài khoản.</string>
+    <string name="onboarding_discover_title">Khám phá</string>
+    <string name="onboarding_discover_body">Chuyển giữa AI của bạn và Cộng đồng. Chỉ cần đăng nhập Google khi đăng nhân vật.</string>
+    <string name="onboarding_create_title">Tạo và tùy chỉnh</string>
+    <string name="onboarding_create_body">Tạo nhân vật, nhập cấu hình chia sẻ và chỉnh từng phiên trong Cài đặt nhân vật.</string>
+    <string name="onboarding_chat_title">Bắt đầu trò chuyện</string>
+    <string name="onboarding_chat_body">Thiết lập khóa API của nhà cung cấp, rồi dùng thao tác tin nhắn và ô soạn để dẫn dắt câu chuyện.</string>
+    <string name="onboarding_replay_title">Hướng dẫn ban đầu</string>
+    <string name="onboarding_replay_body">Xem lại phần giới thiệu giao diện nhập vai.</string>
 </resources>

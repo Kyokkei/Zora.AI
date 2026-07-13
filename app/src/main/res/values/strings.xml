@@ -202,4 +202,18 @@
 
     <!-- === OTHERS PRESERVED === -->
     <string name="lorebook_counter">%1$d/16000 - Canon, rules, locations, factions.</string>
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_back">Back</string>
+    <string name="onboarding_next">Next</string>
+    <string name="onboarding_start">Start exploring</string>
+    <string name="onboarding_private_title">Your private roleplay space</string>
+    <string name="onboarding_private_body">Chats and API keys stay on this device. Community browsing never needs an account.</string>
+    <string name="onboarding_discover_title">Discover</string>
+    <string name="onboarding_discover_body">Switch between Your AI and Community. Google sign-in is only needed to publish.</string>
+    <string name="onboarding_create_title">Create and customize</string>
+    <string name="onboarding_create_body">Build characters, import shared configs, and tune each session from Persona Settings.</string>
+    <string name="onboarding_chat_title">Start chatting</string>
+    <string name="onboarding_chat_body">Set up a provider API key, then use message actions and the composer to shape your story.</string>
+    <string name="onboarding_replay_title">Onboarding guide</string>
+    <string name="onboarding_replay_body">Replay the Roleplay UI introduction.</string>
 </resources>
