@@ -17,10 +17,13 @@
     </header>
     <section class="panel">
       <h2>Administration</h2>
-      <p>Create one-time invitation codes for trusted community members.</p>
+      <p>Inspect storage protection and pause publishing without affecting downloads.</p>
       <label>Admin key <input id="adminKey" type="password" autocomplete="off"></label>
-      <label>Expires in days <input id="days" type="number" min="1" max="365" value="30"></label>
-      <button id="createInvite">Create invite</button>
+      <div class="actions">
+        <button id="refreshStorage">Check storage</button>
+        <button id="enableUploads" class="secondary">Enable uploads</button>
+        <button id="disableUploads" class="danger">Pause uploads</button>
+      </div>
       <output id="result" aria-live="polite"></output>
     </section>
   </main>

@@ -1,4 +1,4 @@
-# Zora.AI ◈ (v2.2.4 / build 229)
+# Zora.AI ◈ (v2.2.5 / build 230)
 Zora.AI is a native Android AI companion built by Phan Chi Vy. 
 
 ## The TL;DR
@@ -35,12 +35,18 @@ Grok 4.3 (Lowest Risk) ──> Gemini 3.5 ──> GPT-5.5 ──> Claude 4.8 (Hi
 
 ---
 
-## 🌟 What's New in v2.2.4
-* 🌐 **Community Discover Source**: Switch between Your AI and Community inside Discover; browsing and importing are public, while an owner-provided invite is required only for publishing.
+## 🌟 What's New in v2.2.5
+* 🔑 **Google-Owned Publishing**: Anyone can browse and import Community characters, while publishing and deleting require a Google account that owns the upload.
+* 🛡️ **Free-Tier Abuse Protection**: Per-account and privacy-preserving per-IP limits, upload reservations, storage ceilings, and an emergency upload switch guard Cloudflare R2.
+* 🧹 **No Invite Codes**: Community publishing now uses Google identity directly, removing manual invite setup and distribution.
+* 💬 **Local-First Accounts**: Google sign-in controls Community ownership only; chats, API keys, and local characters remain on the device and are not synced.
+
+## Previously in v2.2.4
+* 🌐 **Community Discover Source**: Switch between Your AI and Community inside Discover; browsing and importing are public, while authentication is required only for publishing.
 * 📤 **Complete Character Publishing**: Share sanitized prompts, lore, tags, avatars, and custom backgrounds without exposing API keys or chat history.
 * 📥 **Safe Community Imports**: Community downloads flow through Zora's existing import preview and duplicate warning before becoming local characters.
 * 🧊 **Layered Caching**: Immutable media URLs, Cloudflare edge caching, and Coil's device cache reduce repeated downloads.
-* 🔐 **Free-Tier Guardrails**: Invite authentication, private object storage, upload limits, rate limits, and a 5 GB application storage ceiling protect the free allowance.
+* 🔐 **Free-Tier Guardrails**: Publisher authentication, private object storage, upload limits, rate limits, and a 5 GB application storage ceiling protect the free allowance.
 
 ## Previously in v2.2.3
 * 🎠 **Discover Hero Carousel**: The Roleplay Discover tab now uses a swipeable full-screen character carousel with side peeks, search, real user tags, detail sheets, and direct Chat actions.

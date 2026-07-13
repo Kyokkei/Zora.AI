@@ -12,5 +12,8 @@ h1 { font-size: 34px; margin-bottom: 0; }
 label { display: grid; gap: 8px; color: #c7cad6; margin: 18px 0; }
 input { width: 100%; border: 1px solid #34394d; background: #0b0e15; color: #fff; padding: 13px 14px; border-radius: 6px; font: inherit; }
 button { border: 0; background: #ff5b91; color: #0a0b10; padding: 13px 18px; border-radius: 6px; font: inherit; font-weight: 750; cursor: pointer; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+button.secondary { background: #dce6ff; }
+button.danger { background: #ffca58; }
 output { display: block; margin-top: 18px; min-height: 24px; color: #b8bccb; overflow-wrap: anywhere; }
 @media (max-width: 560px) { main { padding-top: 28px; } header { align-items: flex-start; flex-direction: column; } }

@@ -13,8 +13,13 @@ android {
         applicationId = "com.yozora.aichat"
         minSdk = 26
         targetSdk = 35
-        versionCode = 229
-        versionName = "2.2.4"
+        versionCode = 230
+        versionName = "2.2.5"
+
+        val googleWebClientId = providers.gradleProperty("ZORA_GOOGLE_WEB_CLIENT_ID")
+            .orElse(System.getenv("ZORA_GOOGLE_WEB_CLIENT_ID") ?: "CONFIGURE_ME")
+            .get()
+        resValue("string", "google_web_client_id", googleWebClientId)
 
         vectorDrawables {
             useSupportLibrary = true
@@ -26,13 +31,13 @@ android {
         create("zora") {
             dimension = "brand"
             resValue("string", "app_name", "Zora.AI")
-            resValue("string", "app_version_panel", "Zora.AI v2.2.4")
+            resValue("string", "app_version_panel", "Zora.AI v2.2.5")
         }
         create("slv") {
             dimension = "brand"
             applicationIdSuffix = ".slv"
             resValue("string", "app_name", "SanLoVerse (SLV)")
-            resValue("string", "app_version_panel", "SanLoVerse (SLV) v2.2.4")
+            resValue("string", "app_version_panel", "SanLoVerse (SLV) v2.2.5")
         }
     }
 
@@ -63,6 +68,9 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.credentials:credentials:1.5.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.5.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")

@@ -16,6 +16,9 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.activity.compose.BackHandler
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -236,9 +239,11 @@ import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 
-private const val APP_VERSION_NAME = "2.2.4"
-private const val APP_VERSION_CODE = 229
+private const val APP_VERSION_NAME = "2.2.5"
+private const val APP_VERSION_CODE = 230
 
 private fun Context.applyLanguageOverride(languageCode: String) {
     val locale = Locale.forLanguageTag(if (languageCode == "vi") "vi" else "en")
@@ -8393,10 +8398,41 @@ private fun CommunityDiscoverPane(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var registerVisible by remember { mutableStateOf(false) }
-    var username by remember { mutableStateOf("") }
-    var inviteCode by remember { mutableStateOf("") }
-    var recoveryCode by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+    val credentialManager = remember(context) { CredentialManager.create(context) }
+    var signInVisible by remember { mutableStateOf(false) }
+
+    fun beginGoogleSignIn() {
+        val clientId = context.getString(R.string.google_web_client_id)
+        if (clientId.isBlank() || clientId == "CONFIGURE_ME") {
+            android.widget.Toast.makeText(context, "Google Sign-In is not configured in this build.", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        coroutineScope.launch {
+            runCatching {
+                val option = GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setServerClientId(clientId)
+                    .setAutoSelectEnabled(false)
+                    .build()
+                val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
+                val credential = credentialManager.getCredential(context, request).credential
+                if (credential !is CustomCredential || credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    error("Google did not return a usable account credential.")
+                }
+                GoogleIdTokenCredential.createFrom(credential.data).idToken
+            }.onSuccess { token ->
+                signInVisible = false
+                viewModel.signInHubWithGoogle(token)
+            }.onFailure { cause ->
+                android.widget.Toast.makeText(
+                    context,
+                    cause.message?.take(140) ?: "Google sign-in was cancelled.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
 
     LaunchedEffect(searchQuery, viewModel.hubUsername) {
         delay(400)
@@ -8418,10 +8454,13 @@ private fun CommunityDiscoverPane(
                 modifier = Modifier.weight(1f)
             )
             if (viewModel.hubUsername == null) {
-                TextButton(onClick = { registerVisible = true }) {
-                    Text("Register to publish", color = LocalRoleplayColors.current.accent, fontWeight = FontWeight.Bold)
+                TextButton(onClick = { signInVisible = true }) {
+                    Text("Sign in to publish", color = LocalRoleplayColors.current.accent, fontWeight = FontWeight.Bold)
                 }
             } else {
+                TextButton(onClick = viewModel::signOutHub) {
+                    Text("Sign out", color = LocalRoleplayColors.current.textSecondary)
+                }
                 IconButton(onClick = { viewModel.refreshHubCharacters(searchQuery) }) {
                     Icon(Icons.Rounded.Refresh, contentDescription = "Refresh", tint = LocalRoleplayColors.current.accent)
                 }
@@ -8448,176 +8487,24 @@ private fun CommunityDiscoverPane(
         }
     }
 
-    if (registerVisible) {
+    if (signInVisible) {
         AlertDialog(
-            onDismissRequest = { if (!viewModel.hubLoading) registerVisible = false },
-            title = { Text("Register to publish") },
+            onDismissRequest = { if (!viewModel.hubLoading) signInVisible = false },
+            title = { Text("Sign in to publish") },
             text = {
-                Column {
-                    Text("Browsing and downloading stay public. Registration is only for publishing and managing your uploads.")
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = username,
-                        onValueChange = { username = it.take(24) },
-                        label = { Text("Username") },
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = inviteCode,
-                        onValueChange = { inviteCode = it.trim() },
-                        label = { Text("Invite code") },
-                        singleLine = true
-                    )
-                }
+                Text(
+                    "Google Sign-In is used only to identify who owns a Community upload. " +
+                        "Your chats, API keys, sessions, and local characters stay on this device. " +
+                        "Browsing and importing never require an account."
+                )
             },
             confirmButton = {
                 TextButton(
-                    enabled = username.length >= 3 && inviteCode.isNotBlank() && !viewModel.hubLoading,
-                    onClick = {
-                        viewModel.registerHub(username, inviteCode) { code ->
-                            recoveryCode = code
-                            registerVisible = false
-                        }
-                    }
-                ) { Text("Register") }
+                    enabled = !viewModel.hubLoading,
+                    onClick = ::beginGoogleSignIn
+                ) { Text("Continue with Google") }
             },
-            dismissButton = { TextButton(onClick = { registerVisible = false }) { Text("Cancel") } }
-        )
-    }
-
-    recoveryCode?.let { code ->
-        AlertDialog(
-            onDismissRequest = {},
-            title = { Text("Save your recovery code") },
-            text = { Text("This is shown once. Keep it somewhere private:\n\n$code") },
-            confirmButton = { TextButton(onClick = { recoveryCode = null }) { Text("I saved it") } }
-        )
-    }
-}
-
-@Composable
-private fun CommunityHubScreen(
-    viewModel: ChatViewModel,
-    onBack: () -> Unit
-) {
-    val context = LocalContext.current
-    var username by remember { mutableStateOf("") }
-    var inviteCode by remember { mutableStateOf("") }
-    var searchQuery by remember { mutableStateOf("") }
-    var recoveryCode by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(viewModel.hubUsername) {
-        if (viewModel.hubUsername != null) viewModel.refreshHubCharacters()
-    }
-    LaunchedEffect(viewModel.hubMessage) {
-        viewModel.hubMessage?.let {
-            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show()
-            viewModel.clearHubMessage()
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = LocalRoleplayColors.current.textPrimary)
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Community", color = LocalRoleplayColors.current.textPrimary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text(
-                    viewModel.hubUsername?.let { "Signed in as @$it" } ?: "Invite-only character sharing",
-                    color = LocalRoleplayColors.current.textSecondary,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-            if (viewModel.hubUsername != null) {
-                IconButton(onClick = { viewModel.refreshHubCharacters(searchQuery) }) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = "Refresh", tint = LocalRoleplayColors.current.accent)
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        if (viewModel.hubUsername == null) {
-            Surface(
-                color = LocalRoleplayColors.current.surface,
-                shape = RoundedCornerShape(8.dp),
-                border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text("Join Zora Community", color = LocalRoleplayColors.current.textPrimary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Use the one-time code shared by the hub owner.", color = LocalRoleplayColors.current.textSecondary)
-                    Spacer(modifier = Modifier.height(14.dp))
-                    OutlinedTextField(
-                        value = username,
-                        onValueChange = { username = it.take(24) },
-                        label = { Text("Username") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = inviteCode,
-                        onValueChange = { inviteCode = it.trim() },
-                        label = { Text("Invite code") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Button(
-                        onClick = { viewModel.registerHub(username, inviteCode) { recoveryCode = it } },
-                        enabled = username.length >= 3 && inviteCode.isNotBlank() && !viewModel.hubLoading,
-                        colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.accent),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (viewModel.hubLoading) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                        else Text("Register", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        } else {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-                trailingIcon = {
-                    IconButton(onClick = { viewModel.refreshHubCharacters(searchQuery) }) {
-                        Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Search")
-                    }
-                },
-                placeholder = { Text("Search Community") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            if (viewModel.hubLoading && viewModel.hubCharacters.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = LocalRoleplayColors.current.accent) }
-            } else if (viewModel.hubCharacters.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No shared characters yet.", color = LocalRoleplayColors.current.textSecondary)
-                }
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
-                    items(viewModel.hubCharacters, key = { it.id }) { character ->
-                        CommunityCharacterRow(character = character, onImport = { viewModel.importHubCharacter(character.id) })
-                    }
-                }
-            }
-        }
-    }
-
-    recoveryCode?.let { code ->
-        AlertDialog(
-            onDismissRequest = {},
-            title = { Text("Save your recovery code") },
-            text = { Text("This is shown once. Keep it somewhere private:\n\n$code") },
-            confirmButton = { TextButton(onClick = { recoveryCode = null }) { Text("I saved it") } }
+            dismissButton = { TextButton(onClick = { signInVisible = false }) { Text("Cancel") } }
         )
     }
 }

@@ -14,4 +14,6 @@ bucket_name = "zora-hub-media"
 [vars]
 APP_ORIGIN = "https://zora-hub.pages.dev"
 MAX_TOTAL_STORAGE_BYTES = "5000000000"
-MAX_CHARACTERS_PER_USER = "20"
+MAX_CHARACTERS_PER_USER = "5"
+MAX_USER_STORAGE_BYTES = "8000000"
+GOOGLE_CLIENT_ID = "360978636977-hs31046quga007q459vjvqkt87shd21g.apps.googleusercontent.com"

@@ -2701,31 +2701,52 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         hubMessage = null
     }
 
-    fun registerHub(username: String, inviteCode: String, onRecoveryCode: (String) -> Unit) {
-        if (username.isBlank() || inviteCode.isBlank() || hubLoading) return
+    fun signInHubWithGoogle(idToken: String) {
+        if (idToken.isBlank() || hubLoading) return
         hubLoading = true
         hubMessage = null
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val body = JSONObject()
-                        .put("username", username.trim())
-                        .put("inviteCode", inviteCode.trim())
-                    val response = hubRequest("auth/register", "POST", body = body)
-                    Triple(response.getString("token"), response.getString("recoveryCode"), response.getJSONObject("user").getString("username"))
+                    val body = JSONObject().put("idToken", idToken)
+                    val existingToken = hubToken
+                    val response = if (existingToken != null) {
+                        runCatching { hubRequest("auth/google/link", "POST", existingToken, body) }
+                            .getOrElse { hubRequest("auth/google", "POST", body = body) }
+                    } else {
+                        hubRequest("auth/google", "POST", body = body)
+                    }
+                    response.getString("token") to response.getJSONObject("user").getString("username")
                 }
             }
-            result.onSuccess { (token, recoveryCode, registeredUsername) ->
+            result.onSuccess { (token, signedInUsername) ->
                 hubToken = token
-                hubUsername = registeredUsername
+                hubUsername = signedInUsername
                 settingsDataStore.edit { preferences ->
                     preferences[hubTokenKey] = token
-                    preferences[hubUsernameKey] = registeredUsername
+                    preferences[hubUsernameKey] = signedInUsername
                 }
-                onRecoveryCode(recoveryCode)
+                hubMessage = "Signed in as @$signedInUsername."
                 refreshHubCharacters()
-            }.onFailure { hubMessage = it.message ?: "Hub registration failed." }
+            }.onFailure { hubMessage = it.message ?: "Google sign-in failed." }
             hubLoading = false
+        }
+    }
+
+    fun signOutHub() {
+        val token = hubToken
+        hubToken = null
+        hubUsername = null
+        hubMessage = "Signed out. Community browsing stays available."
+        viewModelScope.launch {
+            if (token != null) {
+                withContext(Dispatchers.IO) { runCatching { hubRequest("auth/logout", "POST", token) } }
+            }
+            settingsDataStore.edit { preferences ->
+                preferences.remove(hubTokenKey)
+                preferences.remove(hubUsernameKey)
+            }
+            refreshHubCharacters()
         }
     }
 
@@ -2779,7 +2800,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun publishSessionToHub(sessionId: String) {
         val token = hubToken
         if (token == null) {
-            hubMessage = "Register for Community before publishing."
+            hubMessage = "Sign in with Google before publishing. Local characters and chats stay on this device."
             return
         }
         val session = sessions.firstOrNull { it.id == sessionId } ?: return
@@ -2806,7 +2827,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             result.onSuccess {
                 hubMessage = "${session.persona.displayName} published to Community."
                 refreshHubCharacters()
-            }.onFailure { hubMessage = it.message ?: "Publishing failed." }
+            }.onFailure {
+                val message = it.message ?: "Publishing failed."
+                hubMessage = message
+                if (message.contains("Authentication required", ignoreCase = true)) {
+                    hubToken = null
+                    hubUsername = null
+                    settingsDataStore.edit { preferences ->
+                        preferences.remove(hubTokenKey)
+                        preferences.remove(hubUsernameKey)
+                    }
+                }
+            }
             hubLoading = false
         }
     }
