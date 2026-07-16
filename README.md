@@ -1,5 +1,17 @@
-# Zora.AI ◈ (v2.2.5 / build 230)
+# Zora.AI ◈ (v2.2.5 / build 233)
 Zora.AI is a native Android AI companion built by Phan Chi Vy. 
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/discover-carousel.jpg" width="30%" alt="Discover character carousel" />
+  <img src="docs/screenshots/character-details.jpg" width="30%" alt="Character details and actions" />
+  <img src="docs/screenshots/roleplay-chat.jpg" width="30%" alt="Roleplay chat with semantic text colors" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/persona-ui.jpg" width="30%" alt="Per-session Persona UI settings" />
+  <img src="docs/screenshots/roleplay-settings.jpg" width="30%" alt="Global Roleplay UI settings" />
+</p>
 
 ## The TL;DR
 **FUCK corporate censorship. FUCK paywalls.**
@@ -36,6 +48,10 @@ Grok 4.3 (Lowest Risk) ──> Gemini 3.5 ──> GPT-5.5 ──> Claude 4.8 (Hi
 ---
 
 ## 🌟 What's New in v2.2.5
+* 🎭 **Semantic Roleplay Presentation**: Dialogue, actions, and in-character thoughts use distinct readable colors while preserving the original message text.
+* 🫧 **Liquid-Glass Bubbles**: Choose glass styling for user messages, AI messages, or both globally and per session.
+* 🧭 **Roleplay Onboarding**: A short first-run guide explains Discover, Community, creation, privacy, and chat setup, with a replay option in Settings.
+* 👤 **Rich Community Profiles**: Open shared characters in a complete profile sheet before downloading, with duplicate-safe import actions.
 * 🔑 **Google-Owned Publishing**: Anyone can browse and import Community characters, while publishing and deleting require a Google account that owns the upload.
 * 🛡️ **Free-Tier Abuse Protection**: Per-account and privacy-preserving per-IP limits, upload reservations, storage ceilings, and an emergency upload switch guard Cloudflare R2.
 * 🧹 **No Invite Codes**: Community publishing now uses Google identity directly, removing manual invite setup and distribution.

@@ -167,6 +167,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -186,6 +187,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -700,8 +703,7 @@ fun CompanionChatApp(
                 onSafetyLevelChange = viewModel::updateSafetyLevel,
                 onThinkingEffortChange = viewModel::updateThinkingEffort,
                 onTemperatureChange = viewModel::updateTemperature,
-                onAvatarChange = viewModel::updateAvatar,
-                onAvatarTransform = viewModel::transformAvatar,
+                onAvatarCrop = viewModel::setAvatarCrop,
                 onSessionHeaderAvatarChange = viewModel::updateSessionHeaderAvatar,
                 onSessionHeaderAvatarTransform = viewModel::transformSessionHeaderAvatar,
                 onBackgroundChange = viewModel::updateBackground,
@@ -846,6 +848,10 @@ fun CompanionChatApp(
         actionMessage != null -> BackHandler { actionMessage = null }
         viewModel.personaSheetVisible -> BackHandler(onBack = viewModel::closePersonaSheet)
         viewModel.sessionDrawerVisible -> BackHandler(onBack = viewModel::closeSessionDrawer)
+        viewModel.roleplayUiModeEnabled && activeChatOpen -> BackHandler { activeChatOpen = false }
+        viewModel.roleplayUiModeEnabled && activeRoleplayTab != RoleplayTab.Discover -> BackHandler {
+            activeRoleplayTab = RoleplayTab.Discover
+        }
     }
 }
 
@@ -3110,6 +3116,15 @@ private fun TypingDot(alpha: Float) {
     )
 }
 
+private data class AvatarCropRequest(
+    val uri: android.net.Uri,
+    val scale: Float = 1f,
+    val offsetX: Float = 0f,
+    val offsetY: Float = 0f,
+    val rotation: Float = 0f,
+    val normalizedOffsets: Boolean = false
+)
+
 private fun ChatMessage.sameBubbleActor(other: ChatMessage): Boolean {
     if (role != other.role) return false
     if (role == "user") return true
@@ -5108,8 +5123,7 @@ private fun PersonaSettingsSheet(
     onSafetyLevelChange: (SafetyLevel) -> Unit,
     onThinkingEffortChange: (GeminiThinkingEffort) -> Unit,
     onTemperatureChange: (Float) -> Unit,
-    onAvatarChange: (android.net.Uri?) -> Unit,
-    onAvatarTransform: (Float, Float, Float) -> Unit,
+    onAvatarCrop: (android.net.Uri, Float, Float, Float, Float) -> Unit,
     onSessionHeaderAvatarChange: (android.net.Uri?) -> Unit,
     onSessionHeaderAvatarTransform: (Float, Float, Float) -> Unit,
     onBackgroundChange: (ChatBackground) -> Unit,
@@ -5141,9 +5155,12 @@ private fun PersonaSettingsSheet(
     var instructionPromptExpanded by remember { mutableStateOf(true) }
     var selectedSection by remember { mutableStateOf(PersonaSettingsSection.Context) }
     var showTagPicker by remember { mutableStateOf(false) }
+    var avatarCropRequest by remember { mutableStateOf<AvatarCropRequest?>(null) }
     val imagePicker = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
-        onResult = onAvatarChange
+        onResult = { uri ->
+            if (uri != null) avatarCropRequest = AvatarCropRequest(uri = uri)
+        }
     )
     val sessionHeaderImagePicker = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
@@ -5308,7 +5325,18 @@ private fun PersonaSettingsSheet(
                     AvatarEditor(
                         persona = persona,
                         onUpload = { imagePicker.launch(arrayOf("image/*")) },
-                        onTransform = onAvatarTransform
+                        onEdit = {
+                            persona.avatarUri?.let { uri ->
+                                avatarCropRequest = AvatarCropRequest(
+                                    uri = uri,
+                                    scale = persona.avatarScale,
+                                    offsetX = persona.avatarOffsetX,
+                                    offsetY = persona.avatarOffsetY,
+                                    rotation = persona.avatarRotation,
+                                    normalizedOffsets = persona.avatarTransformNormalized
+                                )
+                            }
+                        }
                     )
 
                     PersonaTextField(
@@ -5466,6 +5494,16 @@ private fun PersonaSettingsSheet(
             showTagPicker = false
         }
     )
+    avatarCropRequest?.let { request ->
+        AvatarCropDialog(
+            request = request,
+            onDismiss = { avatarCropRequest = null },
+            onSave = { scale, offsetX, offsetY, rotation ->
+                onAvatarCrop(request.uri, scale, offsetX, offsetY, rotation)
+                avatarCropRequest = null
+            }
+        )
+    }
 }
 
 @Composable
@@ -5765,7 +5803,7 @@ private fun SessionHeaderAvatarEditor(
 private fun AvatarEditor(
     persona: PersonaUiState,
     onUpload: () -> Unit,
-    onTransform: (Float, Float, Float) -> Unit
+    onEdit: () -> Unit
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -5778,11 +5816,6 @@ private fun AvatarEditor(
                 modifier = Modifier
                     .size(150.dp)
                     .clip(CircleShape)
-                    .pointerInput(persona.avatarUri) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            onTransform(zoom, pan.x, pan.y)
-                        }
-                    }
                     .background(
                         Brush.radialGradient(
                             colors = listOf(AppAccentSoft.copy(alpha = 0.45f), AppSurface2)
@@ -5798,7 +5831,7 @@ private fun AvatarEditor(
                 )
             }
             IconButton(
-                onClick = onUpload,
+                onClick = if (persona.avatarUri == null) onUpload else onEdit,
                 modifier = Modifier
                     .offset(x = 2.dp, y = 2.dp)
                     .size(48.dp)
@@ -5808,7 +5841,7 @@ private fun AvatarEditor(
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Upload,
-                    contentDescription = "Upload avatar",
+                    contentDescription = if (persona.avatarUri == null) "Upload avatar" else "Adjust avatar",
                     tint = AppAccentSoft
                 )
             }
@@ -5836,8 +5869,15 @@ private fun AvatarEditor(
                 style = MaterialTheme.typography.labelLarge
             )
         }
+        if (persona.avatarUri != null) {
+            TextButton(onClick = onEdit, modifier = Modifier.padding(top = 4.dp)) {
+                Icon(Icons.Rounded.Edit, contentDescription = null, tint = AppAccentSoft, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Adjust crop", color = AppAccentSoft)
+            }
+        }
         Text(
-            text = "JPG, PNG or WebP. Pinch and drag to crop.",
+            text = "JPG, PNG or WebP. Adjust before saving.",
             color = AppTextSecondary,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 8.dp)
@@ -7365,6 +7405,159 @@ private fun BubbleGlassChoice(
     }
 }
 
+@Composable
+private fun AvatarCropDialog(
+    request: AvatarCropRequest,
+    onDismiss: () -> Unit,
+    onSave: (scale: Float, offsetX: Float, offsetY: Float, rotation: Float) -> Unit
+) {
+    val cropSize = 280.dp
+    val cropSizePx = with(LocalDensity.current) { cropSize.toPx() }
+    var scale by remember(request) { mutableStateOf(request.scale.coerceIn(1f, 4f)) }
+    var offsetX by remember(request, cropSizePx) {
+        mutableStateOf(if (request.normalizedOffsets) request.offsetX * cropSizePx else request.offsetX)
+    }
+    var offsetY by remember(request, cropSizePx) {
+        mutableStateOf(if (request.normalizedOffsets) request.offsetY * cropSizePx else request.offsetY)
+    }
+    var rotation by remember(request) {
+        mutableStateOf(((request.rotation + 180f) % 360f + 360f) % 360f - 180f)
+    }
+
+    fun minimumScale(nextRotation: Float): Float {
+        val radians = Math.toRadians(nextRotation.toDouble())
+        return (kotlin.math.abs(kotlin.math.cos(radians)) + kotlin.math.abs(kotlin.math.sin(radians)))
+            .toFloat()
+            .coerceIn(1f, 1.42f)
+    }
+
+    fun clampOffsets(nextScale: Float, nextRotation: Float = rotation) {
+        val coverageScale = minimumScale(nextRotation)
+        val maxOffset = ((nextScale / coverageScale - 1f) * cropSizePx / 2f).coerceAtLeast(0f)
+        offsetX = offsetX.coerceIn(-maxOffset, maxOffset)
+        offsetY = offsetY.coerceIn(-maxOffset, maxOffset)
+    }
+
+    LaunchedEffect(request, cropSizePx) {
+        scale = scale.coerceAtLeast(minimumScale(rotation))
+        clampOffsets(scale)
+    }
+
+    BackHandler(onBack = onDismiss)
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(modifier = Modifier.fillMaxSize(), color = AppBackground) {
+            Column(
+                modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Cancel", tint = AppTextPrimary)
+                    }
+                    Text(
+                        text = "Adjust avatar",
+                        color = AppTextPrimary,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { onSave(scale, offsetX / cropSizePx, offsetY / cropSizePx, rotation) }) {
+                        Text("Save", color = AppAccentSoft, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+                Box(
+                    modifier = Modifier
+                        .size(cropSize)
+                        .clip(CircleShape)
+                        .background(Color.Black)
+                        .border(3.dp, AppAccentSoft, CircleShape)
+                        .pointerInput(request.uri) {
+                            detectTransformGestures { _, pan, zoom, rotationChange ->
+                                val nextRotation = ((rotation + rotationChange + 180f) % 360f + 360f) % 360f - 180f
+                                val coverageScale = minimumScale(nextRotation)
+                                val nextScale = (scale * zoom).coerceIn(coverageScale, 4f)
+                                val maxOffset = ((nextScale / coverageScale - 1f) * size.width / 2f).coerceAtLeast(0f)
+                                scale = nextScale
+                                offsetX = (offsetX + pan.x).coerceIn(-maxOffset, maxOffset)
+                                offsetY = (offsetY + pan.y).coerceIn(-maxOffset, maxOffset)
+                                rotation = nextRotation
+                            }
+                        }
+                ) {
+                    Image(
+                        painter = rememberAsyncImagePainter(request.uri),
+                        contentDescription = "Avatar crop preview",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offsetX,
+                            translationY = offsetY,
+                            rotationZ = rotation
+                        )
+                    )
+                }
+                Text(
+                    text = "Pinch to zoom, drag to position, and twist or use the slider to rotate.",
+                    color = AppTextSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 20.dp)
+                )
+
+                Text("Zoom", color = AppTextPrimary, modifier = Modifier.fillMaxWidth().padding(top = 22.dp))
+                Slider(
+                    value = scale,
+                    onValueChange = { value ->
+                        scale = value.coerceAtLeast(minimumScale(rotation))
+                        clampOffsets(scale)
+                    },
+                    valueRange = 1f..4f,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Rotate", color = AppTextPrimary, modifier = Modifier.width(64.dp))
+                    Slider(
+                        value = rotation.coerceIn(-180f, 180f),
+                        onValueChange = {
+                            rotation = it
+                            scale = scale.coerceAtLeast(minimumScale(rotation))
+                            clampOffsets(scale)
+                        },
+                        valueRange = -180f..180f,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            scale = 1f
+                            offsetX = 0f
+                            offsetY = 0f
+                            rotation = 0f
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Reset") }
+                    OutlinedButton(
+                        onClick = {
+                            rotation = ((rotation + 90f + 180f) % 360f) - 180f
+                            scale = scale.coerceAtLeast(minimumScale(rotation))
+                            clampOffsets(scale)
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Rotate 90 deg") }
+                }
+                Spacer(modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
 private fun formatRoleplayMessage(input: String, lightMode: Boolean): AnnotatedString {
     val speechColor = Color(0xFFFF5D8F)
     val actionColor = if (lightMode) Color(0xFF1677C8) else Color(0xFF55B7FF)
@@ -7926,6 +8119,7 @@ private fun Avatar(
     size: Int,
     modifier: Modifier = Modifier
 ) {
+    val avatarSizePx = with(LocalDensity.current) { size.dp.toPx() }
     val painter = if (persona.avatarUri != null) {
         rememberAsyncImagePainter(persona.avatarUri)
     } else {
@@ -7947,8 +8141,9 @@ private fun Avatar(
                 .graphicsLayer(
                     scaleX = persona.avatarScale,
                     scaleY = persona.avatarScale,
-                    translationX = persona.avatarOffsetX,
-                    translationY = persona.avatarOffsetY
+                    translationX = if (persona.avatarTransformNormalized) persona.avatarOffsetX * avatarSizePx else persona.avatarOffsetX,
+                    translationY = if (persona.avatarTransformNormalized) persona.avatarOffsetY * avatarSizePx else persona.avatarOffsetY,
+                    rotationZ = persona.avatarRotation
                 )
         )
     }
@@ -8740,6 +8935,7 @@ private fun CommunityCharacterDetailSheet(
     onConfirmImport: () -> Unit,
     onConfirmCopy: () -> Unit
 ) {
+    BackHandler(onBack = onDismiss)
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -9063,6 +9259,7 @@ private fun CharacterDetailSheet(
     onCloneSession: (() -> Unit)?,
     onDelete: (() -> Unit)?
 ) {
+    BackHandler(onBack = onDismiss)
     Box(
         modifier = Modifier
             .fillMaxSize()

@@ -337,6 +337,8 @@ data class PersonaUiState(
     val avatarScale: Float = 1.0f,
     val avatarOffsetX: Float = 0f,
     val avatarOffsetY: Float = 0f,
+    val avatarRotation: Float = 0f,
+    val avatarTransformNormalized: Boolean = false,
     val traits: List<String> = emptyList()
 )
 
@@ -2632,6 +2634,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         root.put("avatarScale", session.persona.avatarScale.toDouble())
         root.put("avatarOffsetX", session.persona.avatarOffsetX.toDouble())
         root.put("avatarOffsetY", session.persona.avatarOffsetY.toDouble())
+        root.put("avatarRotation", session.persona.avatarRotation.toDouble())
+        root.put("avatarTransformNormalized", session.persona.avatarTransformNormalized)
         root.put("instructionMode", session.persona.instructionMode.name)
         root.put("beginnerRole", session.persona.beginnerRole)
         root.put("beginnerStyle", session.persona.beginnerStyle)
@@ -2983,6 +2987,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val avatarScale = root.optDouble("avatarScale", 1.0).toFloat()
         val avatarOffsetX = root.optDouble("avatarOffsetX", 0.0).toFloat()
         val avatarOffsetY = root.optDouble("avatarOffsetY", 0.0).toFloat()
+        val avatarRotation = root.optDouble("avatarRotation", 0.0).toFloat()
+        val avatarTransformNormalized = root.optBoolean("avatarTransformNormalized", false)
         val instructionModeName = root.optString("instructionMode")
         val instructionMode = InstructionMode.entries.firstOrNull { it.name == instructionModeName }
             ?: InstructionMode.Beginner
@@ -3039,6 +3045,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             avatarScale = avatarScale,
             avatarOffsetX = avatarOffsetX,
             avatarOffsetY = avatarOffsetY,
+            avatarRotation = avatarRotation,
+            avatarTransformNormalized = avatarTransformNormalized,
             vendor = defaultVendor,
             model = defaultModel,
             traits = traits.filterNot { it in listOf("Empathetic", "Encouraging", "Curious", "Calm") }
@@ -3269,7 +3277,29 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updatePersonaName(value: String) {
-        updatePersona { it.copy(displayName = value.take(32)) }
+        val nextName = value.take(32)
+        updateActiveSession { session ->
+            val members = session.normalizedMembers()
+            val activeId = session.activeMemberId.takeIf { id -> members.any { it.id == id } }
+                ?: members.first().id
+            val previousName = members.first { it.id == activeId }.persona.displayName
+            val updatedMembers = members.map { member ->
+                if (member.id == activeId) member.copy(persona = member.persona.copy(displayName = nextName)) else member
+            }
+            val activePersona = updatedMembers.first { it.id == activeId }.persona
+            val titleWasGenerated = members.size == 1 && (
+                session.title.isBlank() ||
+                    session.title.equals(previousName, ignoreCase = true) ||
+                    session.title.equals("$previousName copy", ignoreCase = true)
+                )
+            session.copy(
+                title = if (titleWasGenerated) "" else session.title,
+                persona = activePersona,
+                members = updatedMembers,
+                activeMemberId = activeId,
+                updatedAt = currentTime()
+            )
+        }
     }
 
     fun updateAuthor(value: String) {
@@ -3635,7 +3665,29 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 avatarUri = uri,
                 avatarScale = 1f,
                 avatarOffsetX = 0f,
-                avatarOffsetY = 0f
+                avatarOffsetY = 0f,
+                avatarRotation = 0f,
+                avatarTransformNormalized = false
+            )
+        }
+    }
+
+    fun setAvatarCrop(
+        uri: Uri,
+        scale: Float,
+        offsetX: Float,
+        offsetY: Float,
+        rotation: Float
+    ) {
+        persistImagePermission(uri)
+        updatePersona {
+            it.copy(
+                avatarUri = uri,
+                avatarScale = scale.coerceIn(1f, 4f),
+                avatarOffsetX = offsetX.coerceIn(-1.5f, 1.5f),
+                avatarOffsetY = offsetY.coerceIn(-1.5f, 1.5f),
+                avatarRotation = ((rotation % 360f) + 360f) % 360f,
+                avatarTransformNormalized = true
             )
         }
     }
@@ -4996,6 +5048,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             ?.replace("\\\"", "\"")
 
         return when {
+            normalized.contains("no gemini response candidate returned") ->
+                if (languageCode == "vi") {
+                    "ái chà, hình như câu chat của bạn hơi nhạy cảm rồi đó. chỉnh nó lại rồi gửi lại đi nà"
+                } else {
+                    "there something wrong with your promt, edit it slightly might help"
+                }
+
             normalized.contains("503") ||
                 normalized.contains("service is currently unavailable") ||
                 normalized.contains("status\": \"unavailable") ||
@@ -5859,6 +5918,8 @@ private fun PersonaUiState.toJson(): JSONObject {
         .put("avatarScale", avatarScale.toDouble())
         .put("avatarOffsetX", avatarOffsetX.toDouble())
         .put("avatarOffsetY", avatarOffsetY.toDouble())
+        .put("avatarRotation", avatarRotation.toDouble())
+        .put("avatarTransformNormalized", avatarTransformNormalized)
         .put(
             "traits",
             JSONArray().apply {
@@ -5900,6 +5961,8 @@ private fun JSONObject.toPersonaUiState(): PersonaUiState {
         avatarScale = optDouble("avatarScale", 1.0).toFloat().coerceIn(1f, 4f),
         avatarOffsetX = optDouble("avatarOffsetX", 0.0).toFloat().coerceIn(-180f, 180f),
         avatarOffsetY = optDouble("avatarOffsetY", 0.0).toFloat().coerceIn(-180f, 180f),
+        avatarRotation = optDouble("avatarRotation", 0.0).toFloat(),
+        avatarTransformNormalized = optBoolean("avatarTransformNormalized", false),
         traits = restoredTraits.filterNot { it in listOf("Empathetic", "Encouraging", "Curious", "Calm") }
     )
 }

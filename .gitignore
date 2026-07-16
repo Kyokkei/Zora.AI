@@ -11,3 +11,5 @@ hub/node_modules/
 hub/.wrangler/
 hub/.dev.vars
 hub/dist/
+/plan.md
+/improve.md

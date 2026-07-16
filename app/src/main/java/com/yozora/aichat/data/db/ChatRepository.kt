@@ -252,6 +252,8 @@ private fun PersonaUiState.toJsonString(): String {
         .put("avatarScale", avatarScale.toDouble())
         .put("avatarOffsetX", avatarOffsetX.toDouble())
         .put("avatarOffsetY", avatarOffsetY.toDouble())
+        .put("avatarRotation", avatarRotation.toDouble())
+        .put("avatarTransformNormalized", avatarTransformNormalized)
         .put("traits", JSONArray().apply { traits.forEach { put(it) } })
         .toString()
 }
@@ -289,6 +291,8 @@ private fun String.toPersonaUiState(): PersonaUiState {
         avatarScale = json.optDouble("avatarScale", 1.0).toFloat().coerceIn(1f, 4f),
         avatarOffsetX = json.optDouble("avatarOffsetX", 0.0).toFloat().coerceIn(-180f, 180f),
         avatarOffsetY = json.optDouble("avatarOffsetY", 0.0).toFloat().coerceIn(-180f, 180f),
+        avatarRotation = json.optDouble("avatarRotation", 0.0).toFloat(),
+        avatarTransformNormalized = json.optBoolean("avatarTransformNormalized", false),
         traits = traits.filterNot { it in listOf("Empathetic", "Encouraging", "Curious", "Calm") }
     )
 }
