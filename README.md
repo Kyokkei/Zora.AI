@@ -1,4 +1,4 @@
-# Zora.AI ◈ (v2.2.5 / build 233)
+# Zora.AI ◈ (v2.2.6 / build 234)
 Zora.AI is a native Android AI companion built by Phan Chi Vy. 
 
 ## Screenshots
@@ -47,7 +47,13 @@ Grok 4.3 (Lowest Risk) ──> Gemini 3.5 ──> GPT-5.5 ──> Claude 4.8 (Hi
 
 ---
 
-## 🌟 What's New in v2.2.5
+## 🌟 What's New in v2.2.6
+* 💬 **Composer Polish**: A lighter liquid-glass typing area now includes inline Paste, Copy, Cut, Action, Dialogue, and Continue controls without Android's floating menu blocking short drafts.
+* 🎬 **Roleplay Shortcuts**: Cursor-aware Action and Dialogue helpers can insert or wrap selected text, while Continue invisibly asks the character to advance the story.
+* ✨ **Message Feedback**: New messages use a spring-like send animation and meaningful sent, delivered, and failed/retry indicators.
+* 🎨 **Shared Roleplay Formatting**: User and AI messages consistently render actions, spoken dialogue, internal thoughts, and bold emphasis as separate semantic styles.
+
+## What's New in v2.2.5
 * 🎭 **Semantic Roleplay Presentation**: Dialogue, actions, and in-character thoughts use distinct readable colors while preserving the original message text.
 * 🫧 **Liquid-Glass Bubbles**: Choose glass styling for user messages, AI messages, or both globally and per session.
 * 🧭 **Roleplay Onboarding**: A short first-run guide explains Discover, Community, creation, privacy, and chat setup, with a replay option in Settings.

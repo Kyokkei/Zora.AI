@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MessageEntity::class,
         TtsAudioCacheEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -42,7 +42,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_8_9,
                         MIGRATION_9_10,
                         MIGRATION_10_11,
-                        MIGRATION_11_12
+                        MIGRATION_11_12,
+                        MIGRATION_12_13
                     )
                     .build()
                     .also { instance = it }
@@ -174,6 +175,14 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `sessions` ADD COLUMN `bubbleGlassOverride` TEXT")
+            }
+        }
+
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `messages` ADD COLUMN `deliveryStatus` TEXT NOT NULL DEFAULT 'Delivered'"
+                )
             }
         }
     }

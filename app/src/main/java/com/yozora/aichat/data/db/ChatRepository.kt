@@ -10,6 +10,7 @@ import com.yozora.aichat.ui.chat.ChatSession
 import com.yozora.aichat.ui.chat.GroupMember
 import com.yozora.aichat.ui.chat.GeminiThinkingEffort
 import com.yozora.aichat.ui.chat.InstructionMode
+import com.yozora.aichat.ui.chat.MessageDeliveryStatus
 import com.yozora.aichat.ui.chat.PersonaUiState
 import com.yozora.aichat.ui.chat.SafetyLevel
 import org.json.JSONArray
@@ -130,6 +131,7 @@ class ChatRepository private constructor(
                             message.imageUris.forEach { uri -> put(uri.toString()) }
                         }.toString(),
                         remoteImageUrl = message.remoteImageUrl,
+                        deliveryStatus = message.deliveryStatus.name,
                         time = message.time,
                         position = index
                     )
@@ -223,6 +225,8 @@ private fun MessageEntity.toChatMessage(): ChatMessage {
         imageUris = imageUris.take(12),
         remoteImageUrl = remoteImageUrl,
         isImageLoading = false,
+        deliveryStatus = MessageDeliveryStatus.entries.firstOrNull { it.name == deliveryStatus }
+            ?: MessageDeliveryStatus.Delivered,
         time = time.ifBlank { "" }
     )
 }

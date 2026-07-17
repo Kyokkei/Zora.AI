@@ -71,6 +71,12 @@ import java.util.UUID
 
 private const val HUB_BASE_URL = "https://zora-hub.pages.dev/api/v1"
 
+enum class MessageDeliveryStatus {
+    Sent,
+    Delivered,
+    Failed
+}
+
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val role: String,
@@ -80,6 +86,7 @@ data class ChatMessage(
     val imageUris: List<Uri> = emptyList(),
     val remoteImageUrl: String? = null,
     val isImageLoading: Boolean = false,
+    val deliveryStatus: MessageDeliveryStatus = MessageDeliveryStatus.Sent,
     val time: String = currentTime()
 ) {
     val imageUri: Uri?
@@ -1128,6 +1135,71 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 sessionId = sessionId,
                 session = session,
                 rawText = reply.text
+            )
+            sendingSessionId = null
+        }
+    }
+
+    fun continueNarrative() {
+        if (sendingSessionId != null) return
+        viewModelScope.launch {
+            val sessionId = activeSessionId
+            val session = activeSession
+            val members = session.normalizedMembers()
+            val targetMember = members.firstOrNull { it.id == session.activeMemberId } ?: members.first()
+            val provider = targetMember.persona.vendor
+            val apiKey = apiKeyManager.keyForProvider(provider.id)
+            if (apiKey.isNullOrBlank()) {
+                selectGroupMember(targetMember.id)
+                apiKeyDialogTarget = ApiKeyDialogTarget.Provider
+                apiKeyDraft = ""
+                apiKeyDialogVisible = true
+                chatError = "Add a ${provider.label} API key for ${targetMember.persona.displayName} first."
+                return@launch
+            }
+
+            val direction = if (languageCode == "vi") {
+                "Chủ động thúc đẩy mạch truyện tiến triển bằng cách sử dụng sự trôi qua của thời gian, chuyển cảnh, hoặc các sự kiện diễn ra tự nhiên"
+            } else {
+                "Proactively drive the narrative forward using time passage, scene transitions, or organic events."
+            }
+            val internalRequest = """
+                [Narrator direction; this is not dialogue spoken by the user.]
+                $direction
+                Continue naturally in character. Use *single stars* for actions or scene narration, 「Japanese quotation marks」 for spoken dialogue, and parentheses for fictional in-character private thoughts.
+            """.trimIndent()
+
+            chatError = null
+            sendingSessionId = sessionId
+            val result = retryTemporaryUnavailable {
+                sendManagedMessage(
+                    sessionId = sessionId,
+                    apiKey = apiKey,
+                    persona = personaEntityForSession(
+                        session = session,
+                        id = targetMember.id,
+                        persona = targetMember.persona
+                    ),
+                    history = session.messages.toEntities(sessionId),
+                    userInput = internalRequest,
+                    vendor = provider,
+                    safetyLevel = targetMember.persona.safetyLevel,
+                    images = emptyList(),
+                    webSearchEnabled = false,
+                    masterPrompt = masterSystemPrompt
+                )
+            }
+            val reply = result.getOrElse { throwable ->
+                sendingSessionId = null
+                chatError = friendlySendError(throwable)
+                return@launch
+            }
+            recordUsage(reply)
+            appendModelResponseOrRecover(
+                sessionId = sessionId,
+                session = session,
+                rawText = reply.text,
+                speaker = targetMember.takeIf { members.size > 1 }
             )
             sendingSessionId = null
         }
@@ -4303,13 +4375,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val index = sessions.indexOfFirst { it.id == sessionId }
         if (index >= 0) {
             val session = sessions[index]
+            val existingMessages = if (message.role != "user") {
+                session.messages.markLatestUserDelivered()
+            } else {
+                session.messages
+            }
             sessions[index] = session.copy(
-                messages = session.messages + message,
+                messages = existingMessages + message,
                 preview = preview,
                 updatedAt = currentTime()
             )
             persistChatState()
         }
+    }
+
+    private fun updateMessageDeliveryStatus(messageId: String, status: MessageDeliveryStatus) {
+        if (messageId.isBlank()) return
+        val sessionIndex = sessions.indexOfFirst { session -> session.messages.any { it.id == messageId } }
+        if (sessionIndex < 0) return
+        val session = sessions[sessionIndex]
+        sessions[sessionIndex] = session.copy(
+            messages = session.messages.map { message ->
+                if (message.id == messageId && message.role == "user") {
+                    message.copy(deliveryStatus = status)
+                } else {
+                    message
+                }
+            },
+            updatedAt = currentTime()
+        )
+        persistChatState()
     }
 
     private suspend fun appendModelResponseOrRecover(
@@ -5021,6 +5116,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun handleSendFailure(throwable: Throwable, retryMessageId: String) {
+        updateMessageDeliveryStatus(retryMessageId, MessageDeliveryStatus.Failed)
         if (isRateLimitError(throwable)) {
             rateLimitRetryMessageId = retryMessageId
             rateLimitDialogVisible = true
@@ -6045,6 +6141,7 @@ private fun ChatMessage.toJson(): JSONObject {
                 imageUris.forEach { uri -> put(uri.toString()) }
             }
         )
+        .put("deliveryStatus", deliveryStatus.name)
         .put("time", time)
 }
 
@@ -6068,8 +6165,21 @@ private fun JSONObject.toChatMessage(): ChatMessage {
         imageUris = restoredImageUris.take(12),
         remoteImageUrl = optNullableString("remoteImageUrl"),
         isImageLoading = false,
+        deliveryStatus = optString("deliveryStatus")
+            .let { stored -> MessageDeliveryStatus.entries.firstOrNull { it.name == stored } }
+            ?: MessageDeliveryStatus.Delivered,
         time = optString("time").ifBlank { currentTime() }
     )
+}
+
+private fun List<ChatMessage>.markLatestUserDelivered(): List<ChatMessage> {
+    val pendingIndex = indexOfLast { message ->
+        message.role == "user" && message.deliveryStatus == MessageDeliveryStatus.Sent
+    }
+    if (pendingIndex < 0) return this
+    return mapIndexed { index, message ->
+        if (index == pendingIndex) message.copy(deliveryStatus = MessageDeliveryStatus.Delivered) else message
+    }
 }
 
 private fun JSONObject.optNullableString(name: String): String? {
@@ -6165,7 +6275,14 @@ private fun PersonaUiState.toEntity(
         promptSections += levelInstruction
     }
     if (roleplayFormattingEnabled) {
-        promptSections += "For roleplay presentation, put spoken dialogue in double quotes, physical or scene actions inside single asterisks, and fictional in-character private thoughts inside parentheses. Never reveal hidden model reasoning or chain-of-thought."
+        promptSections += """
+            Follow this roleplay presentation format consistently:
+            - Put physical actions and scene narration inside single asterisks: *She walks to the window.*
+            - Put spoken dialogue inside Japanese quotation marks: 「We should leave before sunset.」
+            - Put fictional in-character private thoughts inside parentheses: (Why does this feel familiar?)
+            - Use double asterisks only for intentional bold emphasis: **Do not touch that.**
+            Parenthesized thoughts are fictional character presentation, never hidden model reasoning. Never reveal chain-of-thought.
+        """.trimIndent()
     }
     return PersonaEntity(
         id = id,

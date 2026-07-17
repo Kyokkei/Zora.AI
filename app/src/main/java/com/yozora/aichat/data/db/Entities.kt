@@ -85,6 +85,7 @@ data class MessageEntity(
     val speakerName: String? = null,
     val imageUrisJson: String = "[]",
     val remoteImageUrl: String? = null,
+    val deliveryStatus: String = "Delivered",
     val time: String = "",
     val position: Int = 0
 )

@@ -21,11 +21,13 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -55,6 +57,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -62,6 +65,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -94,6 +98,7 @@ import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Done
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -156,9 +161,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -168,11 +175,15 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.TextToolbar
+import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -180,6 +191,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -212,6 +224,7 @@ import com.yozora.aichat.ui.chat.HubCharacter
 import com.yozora.aichat.ui.chat.ImportPreviewState
 import com.yozora.aichat.ui.chat.InstructionMode
 import com.yozora.aichat.ui.chat.LiveCallTranscriptLine
+import com.yozora.aichat.ui.chat.MessageDeliveryStatus
 import com.yozora.aichat.ui.chat.PersonaUiState
 import com.yozora.aichat.ui.chat.ProjectUiState
 import com.yozora.aichat.ui.chat.QuotaUsageState
@@ -450,6 +463,7 @@ fun CompanionChatApp(
                     animeImagePreset = viewModel.animeImagePreset,
                     onDraftChange = viewModel::updateDraft,
                     onSend = viewModel::sendDraft,
+                    onContinueNarrative = viewModel::continueNarrative,
                     onAttachImages = viewModel::attachImages,
                     onRemoveAttachedImage = viewModel::removeAttachedImage,
                     onWebSearchChange = viewModel::updateWebSearchEnabled,
@@ -516,6 +530,7 @@ fun CompanionChatApp(
                 animeImagePreset = viewModel.animeImagePreset,
                 onDraftChange = viewModel::updateDraft,
                 onSend = viewModel::sendDraft,
+                onContinueNarrative = viewModel::continueNarrative,
                 onAttachImages = viewModel::attachImages,
                 onRemoveAttachedImage = viewModel::removeAttachedImage,
                 onWebSearchChange = viewModel::updateWebSearchEnabled,
@@ -879,6 +894,7 @@ private fun ChatScreen(
     animeImagePreset: AnimeImagePreset,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    onContinueNarrative: () -> Unit,
     onAttachImages: (List<android.net.Uri>) -> Unit,
     onRemoveAttachedImage: (android.net.Uri) -> Unit,
     onWebSearchChange: (Boolean) -> Unit,
@@ -1133,11 +1149,14 @@ private fun ChatScreen(
                     webSearchEnabled = webSearchEnabled,
                     animeImageModeEnabled = animeImageModeEnabled,
                     animeImagePreset = animeImagePreset,
+                    isRoleplayMode = isRoleplayMode,
+                    glassEnabled = isRoleplayMode && bubbleGlassMode != BubbleGlassMode.Off,
                     onDraftChange = onDraftChange,
                     onSend = {
                         focusManager.clearFocus()
                         onSend()
                     },
+                    onContinueNarrative = onContinueNarrative,
                     onOpenTools = {
                         focusManager.clearFocus(force = true)
                         toolsSheetVisible = true
@@ -3181,11 +3200,31 @@ private fun AnimatedMessageBubble(
         }
     }
 
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(animationSpec = tween(220)) +
+    val enterTransition = if (message.role == "user") {
+        fadeIn(animationSpec = tween(100)) +
+            slideInHorizontally(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                ),
+                initialOffsetX = { it / 3 }
+            ) +
+            scaleIn(
+                animationSpec = spring(
+                    dampingRatio = 0.68f,
+                    stiffness = Spring.StiffnessMedium
+                ),
+                initialScale = 0.84f
+            )
+    } else {
+        fadeIn(animationSpec = tween(220)) +
             slideInVertically(animationSpec = tween(260), initialOffsetY = { it / 3 }) +
             scaleIn(animationSpec = tween(260), initialScale = 0.96f)
+    }
+
+    AnimatedVisibility(
+        visible = visible,
+        enter = enterTransition
     ) {
         MessageBubble(
             message = message,
@@ -3333,7 +3372,7 @@ private fun MessageBubble(
                     if (showText) {
                         MarkdownContent(
                             input = displayContent,
-                            semanticRoleplay = isRoleplayMode && !isUser,
+                            semanticRoleplay = isRoleplayMode,
                             roleplayLightMode = roleplayLightMode,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -3351,12 +3390,30 @@ private fun MessageBubble(
                         )
                         if (isUser) {
                             Spacer(modifier = Modifier.width(6.dp))
-                            Icon(
-                                imageVector = Icons.Rounded.DoneAll,
-                                contentDescription = "Sent",
-                                tint = AppAccentSoft,
-                                modifier = Modifier.size(16.dp)
-                            )
+                            when (message.deliveryStatus) {
+                                MessageDeliveryStatus.Sent -> Icon(
+                                    imageVector = Icons.Rounded.Done,
+                                    contentDescription = "Sent",
+                                    tint = AppTextSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+
+                                MessageDeliveryStatus.Delivered -> Icon(
+                                    imageVector = Icons.Rounded.DoneAll,
+                                    contentDescription = "Delivered to AI",
+                                    tint = AppAccentSoft,
+                                    modifier = Modifier.size(16.dp)
+                                )
+
+                                MessageDeliveryStatus.Failed -> Icon(
+                                    imageVector = Icons.Rounded.Refresh,
+                                    contentDescription = "Failed to send. Tap to retry",
+                                    tint = Color(0xFFFF6B7A),
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .clickable(onClick = onRetry)
+                                )
+                            }
                         }
                     }
                 }
@@ -4614,6 +4671,20 @@ private fun AttachmentOptionCard(
     }
 }
 
+private object InlineComposerTextToolbar : TextToolbar {
+    override val status: TextToolbarStatus = TextToolbarStatus.Hidden
+
+    override fun showMenu(
+        rect: Rect,
+        onCopyRequested: (() -> Unit)?,
+        onPasteRequested: (() -> Unit)?,
+        onCutRequested: (() -> Unit)?,
+        onSelectAllRequested: (() -> Unit)?
+    ) = Unit
+
+    override fun hide() = Unit
+}
+
 @Composable
 private fun ChatInputBar(
     placeholder: String,
@@ -4623,13 +4694,66 @@ private fun ChatInputBar(
     webSearchEnabled: Boolean,
     animeImageModeEnabled: Boolean,
     animeImagePreset: AnimeImagePreset,
+    isRoleplayMode: Boolean,
+    glassEnabled: Boolean,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    onContinueNarrative: () -> Unit,
     onOpenTools: () -> Unit,
     onVoiceInput: () -> Unit,
     onRemoveAttachedImage: (android.net.Uri) -> Unit,
     onOpenImage: (android.net.Uri) -> Unit
 ) {
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val clipboardManager = LocalClipboardManager.current
+    var fieldValue by remember {
+        mutableStateOf(TextFieldValue(text = draft, selection = TextRange(draft.length)))
+    }
+    var inputFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(draft) {
+        if (draft != fieldValue.text) {
+            fieldValue = TextFieldValue(text = draft, selection = TextRange(draft.length))
+        }
+    }
+
+    fun wrapSelection(open: String, close: String) {
+        val start = minOf(fieldValue.selection.start, fieldValue.selection.end)
+        val end = maxOf(fieldValue.selection.start, fieldValue.selection.end)
+        val selected = fieldValue.text.substring(start, end)
+        val replacement = open + selected + close
+        val updatedText = fieldValue.text.replaceRange(start, end, replacement)
+        val updatedSelection = if (start == end) {
+            TextRange(start + open.length)
+        } else {
+            TextRange(start + replacement.length)
+        }
+        fieldValue = TextFieldValue(updatedText, updatedSelection)
+        onDraftChange(updatedText)
+    }
+
+    fun copySelection(cut: Boolean) {
+        if (fieldValue.selection.collapsed) return
+        val start = minOf(fieldValue.selection.start, fieldValue.selection.end)
+        val end = maxOf(fieldValue.selection.start, fieldValue.selection.end)
+        clipboardManager.setText(AnnotatedString(fieldValue.text.substring(start, end)))
+        if (cut) {
+            val updatedText = fieldValue.text.removeRange(start, end)
+            fieldValue = TextFieldValue(updatedText, TextRange(start))
+            onDraftChange(updatedText)
+        }
+    }
+
+    fun pasteClipboard() {
+        val pastedText = clipboardManager.getText()?.text.orEmpty()
+        if (pastedText.isEmpty()) return
+        val start = minOf(fieldValue.selection.start, fieldValue.selection.end)
+        val end = maxOf(fieldValue.selection.start, fieldValue.selection.end)
+        val updatedText = fieldValue.text.replaceRange(start, end, pastedText)
+        fieldValue = TextFieldValue(updatedText, TextRange(start + pastedText.length))
+        onDraftChange(updatedText)
+    }
+
     val sendScale by animateFloatAsState(
         targetValue = if ((draft.isBlank() && attachedImageUris.isEmpty()) || isSending) 0.94f else 1f,
         label = "sendScale"
@@ -4639,10 +4763,13 @@ private fun ChatInputBar(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 18.dp, vertical = 6.dp),
-        color = AppSurface2,
+        color = if (glassEnabled) AppSurface2.copy(alpha = 0.58f) else AppSurface2,
         shape = RoundedCornerShape(28.dp),
-        border = BorderStroke(1.dp, AppAccent.copy(alpha = 0.42f)),
-        shadowElevation = 6.dp
+        border = BorderStroke(
+            1.dp,
+            if (glassEnabled) Color.White.copy(alpha = 0.22f) else AppAccent.copy(alpha = 0.42f)
+        ),
+        shadowElevation = if (glassEnabled) 2.dp else 6.dp
     ) {
         Column {
             if (webSearchEnabled || animeImageModeEnabled) {
@@ -4684,6 +4811,62 @@ private fun ChatInputBar(
                     }
                 }
             }
+            AnimatedVisibility(
+                visible = isRoleplayMode && inputFocused && imeVisible,
+                enter = fadeIn(animationSpec = tween(140)) +
+                    slideInVertically(animationSpec = tween(180), initialOffsetY = { it / 2 }),
+                exit = fadeOut(animationSpec = tween(100)) +
+                    slideOutVertically(animationSpec = tween(140), targetOffsetY = { it / 2 })
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, top = 10.dp, end = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (fieldValue.selection.collapsed) {
+                        ComposerShortcut(
+                            label = "Paste",
+                            enabled = !isSending && clipboardManager.getText()?.text?.isNotEmpty() == true,
+                            onClick = { pasteClipboard() },
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
+                        ComposerShortcut(
+                            label = "Copy",
+                            enabled = !isSending,
+                            onClick = { copySelection(cut = false) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        ComposerShortcut(
+                            label = "Cut",
+                            enabled = !isSending,
+                            onClick = { copySelection(cut = true) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    ComposerShortcut(
+                        label = "*Action*",
+                        enabled = !isSending,
+                        onClick = { wrapSelection("*", "*") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    ComposerShortcut(
+                        label = "「Dialogue」",
+                        enabled = !isSending,
+                        onClick = { wrapSelection("「", "」") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (fieldValue.selection.collapsed) {
+                        ComposerShortcut(
+                            label = "Continue",
+                            enabled = !isSending,
+                            onClick = onContinueNarrative,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
             Row(
                 modifier = Modifier
                     .heightIn(min = 60.dp, max = 164.dp)
@@ -4691,7 +4874,7 @@ private fun ChatInputBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
-                    color = AppSurface,
+                    color = if (glassEnabled) Color.Black.copy(alpha = 0.18f) else AppSurface,
                     shape = CircleShape,
                     border = BorderStroke(1.dp, AppStroke),
                     modifier = Modifier
@@ -4708,16 +4891,21 @@ private fun ChatInputBar(
                     }
                 }
                 Spacer(modifier = Modifier.width(8.dp))
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = onDraftChange,
+                CompositionLocalProvider(LocalTextToolbar provides InlineComposerTextToolbar) {
+                    OutlinedTextField(
+                    value = fieldValue,
+                    onValueChange = { value ->
+                        fieldValue = value
+                        onDraftChange(value.text)
+                    },
                     singleLine = false,
                     minLines = 1,
                     maxLines = 6,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 48.dp, max = 144.dp),
+                        .heightIn(min = 48.dp, max = 144.dp)
+                        .onFocusChanged { inputFocused = it.isFocused },
                     placeholder = {
                         Text(
                             text = placeholder,
@@ -4735,9 +4923,10 @@ private fun ChatInputBar(
                         focusedContainerColor = Color.Transparent,
                         unfocusedContainerColor = Color.Transparent
                     )
-                )
+                    )
+                }
                 Surface(
-                    color = AppSurface,
+                    color = if (glassEnabled) Color.Black.copy(alpha = 0.18f) else AppSurface,
                     shape = CircleShape,
                     border = BorderStroke(1.dp, AppStroke),
                     modifier = Modifier
@@ -4782,6 +4971,33 @@ private fun ChatInputBar(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ComposerShortcut(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = AppSurface.copy(alpha = if (enabled) 0.58f else 0.30f),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, AppStroke.copy(alpha = 0.72f)),
+        modifier = modifier
+            .height(38.dp)
+            .clickable(enabled = enabled, onClick = onClick)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = label,
+                color = if (enabled) AppTextPrimary else AppTextMuted,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -7572,17 +7788,23 @@ private fun formatRoleplayMessage(input: String, lightMode: Boolean): AnnotatedS
         }
 
         fun flushPlain(end: Int) {
-            appendSegment(plainStart, end, SpanStyle(color = speechColor))
+            appendSegment(plainStart, end, SpanStyle(color = thoughtColor))
         }
 
         while (index < input.length) {
+            if (input.startsWith("**", index)) {
+                val boldEnd = input.indexOf("**", index + 2)
+                index = if (boldEnd > index + 2) boldEnd + 2 else index + 2
+                continue
+            }
             val delimiter = input[index]
             val isAction = delimiter == '*' &&
                 !input.startsWith("**", index) &&
                 (index == 0 || input[index - 1] != '*')
             val isThought = delimiter == '('
-            val isQuote = delimiter == '"'
-            if (!isAction && !isThought && !isQuote) {
+            val isDialogue = delimiter == '「'
+            val isLegacyQuote = delimiter == '"'
+            if (!isAction && !isThought && !isDialogue && !isLegacyQuote) {
                 index++
                 continue
             }
@@ -7590,6 +7812,7 @@ private fun formatRoleplayMessage(input: String, lightMode: Boolean): AnnotatedS
             val closing = when {
                 isAction -> input.indexOf('*', index + 1)
                 isThought -> input.indexOf(')', index + 1)
+                isDialogue -> input.indexOf('」', index + 1)
                 else -> input.indexOf('"', index + 1)
             }
             if (closing <= index + 1) {
@@ -7598,12 +7821,11 @@ private fun formatRoleplayMessage(input: String, lightMode: Boolean): AnnotatedS
             }
 
             flushPlain(index)
-            val style = when {
-                isAction -> SpanStyle(color = actionColor, fontStyle = FontStyle.Italic)
-                isThought -> SpanStyle(color = thoughtColor)
-                else -> SpanStyle(color = speechColor)
+            when {
+                isAction -> appendSegment(index + 1, closing, SpanStyle(color = actionColor))
+                isThought -> appendSegment(index, closing + 1, SpanStyle(color = thoughtColor))
+                else -> appendSegment(index, closing + 1, SpanStyle(color = speechColor))
             }
-            appendSegment(index, closing + 1, style)
             index = closing + 1
             plainStart = index
         }
