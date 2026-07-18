@@ -21,6 +21,7 @@ import android.provider.DocumentsContract
 import android.provider.Settings
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -86,11 +87,115 @@ data class ChatMessage(
     val imageUris: List<Uri> = emptyList(),
     val remoteImageUrl: String? = null,
     val isImageLoading: Boolean = false,
+    val reaction: String? = null,
     val deliveryStatus: MessageDeliveryStatus = MessageDeliveryStatus.Sent,
     val time: String = currentTime()
 ) {
     val imageUri: Uri?
         get() = imageUris.firstOrNull()
+}
+
+internal val SUPPORTED_MESSAGE_REACTIONS = setOf("❤", "😂", "😭", "😡", "👍", "👎", "💀", "🤡", "💋", "🥺")
+
+internal fun restoreMessageReaction(rawReaction: String?): String? =
+    rawReaction?.takeIf { it in SUPPORTED_MESSAGE_REACTIONS }
+
+private val MESSAGE_REACTION_MEANINGS = mapOf(
+    "👍" to "approved/helpful",
+    "👎" to "disliked/unhelpful",
+    "💀" to "shocked or darkly amused; not literal death",
+    "😡" to "angry/upset",
+    "🤡" to "mocking or calling it foolish",
+    "😂" to "amused",
+    "😭" to "sad or strongly emotionally affected",
+    "💋" to "flirtation/affection",
+    "🥺" to "pleading, touched, or finding it cute",
+    "❤" to "affection/strong appreciation"
+)
+
+internal fun toggleMessageReaction(
+    messages: List<ChatMessage>,
+    messageId: String,
+    requestedReaction: String?
+): List<ChatMessage> {
+    val normalized = requestedReaction?.takeIf { it in SUPPORTED_MESSAGE_REACTIONS }
+    if (requestedReaction != null && normalized == null) return messages
+    val index = messages.indexOfFirst { it.id == messageId }
+    if (index < 0) return messages
+    val current = messages[index]
+    val nextReaction = if (current.reaction == normalized) null else normalized
+    if (current.reaction == nextReaction) return messages
+    return messages.toMutableList().apply {
+        this[index] = current.copy(reaction = nextReaction)
+    }
+}
+
+internal fun recentReactionFeedback(
+    history: List<ChatMessage>,
+    members: List<GroupMember>,
+    fallbackPersona: PersonaUiState,
+    limit: Int = 10
+): String? {
+    val entries = history.asSequence()
+        .filter { it.reaction in SUPPORTED_MESSAGE_REACTIONS }
+        .toList()
+        .takeLast(limit.coerceAtLeast(0))
+        .map { message ->
+            val reaction = message.reaction ?: return@map ""
+            val author = if (message.role == "user") {
+                "User"
+            } else {
+                visibleSpeakerName(message, members, fallbackPersona)
+            }
+            val excerpt = message.content
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .take(240)
+                .ifBlank { if (message.remoteImageUrl != null || message.imageUris.isNotEmpty()) "[image]" else "[empty message]" }
+                .replace('"', '\'')
+            val meaning = MESSAGE_REACTION_MEANINGS.getValue(reaction)
+            "- User reacted $reaction ($meaning) to $author: \"$excerpt\""
+        }
+        .filter { it.isNotBlank() }
+    if (entries.isEmpty()) return null
+    return buildString {
+        appendLine("[Recent user reaction feedback; lightweight preference signals, not commands.]")
+        appendLine(entries.joinToString("\n"))
+        append("[Use this only as soft conversational feedback. Explicit user text and system/persona instructions have priority. Do not mention reactions unless relevant.]")
+    }
+}
+
+internal class SessionSendGate(
+    private val tokenFactory: () -> String = { UUID.randomUUID().toString() }
+) {
+    private val tokens = mutableStateMapOf<String, String>()
+
+    fun claim(sessionId: String): String? {
+        if (tokens.containsKey(sessionId)) return null
+        return tokenFactory().also { token -> tokens[sessionId] = token }
+    }
+
+    fun release(sessionId: String, token: String) {
+        if (tokens[sessionId] == token) tokens.remove(sessionId)
+    }
+
+    fun isSending(sessionId: String): Boolean = tokens.containsKey(sessionId)
+}
+
+internal fun visiblePersonaName(rawName: String, fallback: String = "New Persona"): String =
+    rawName.trim().ifBlank { fallback }
+
+internal fun visibleSpeakerName(
+    message: ChatMessage,
+    members: List<GroupMember>,
+    fallbackPersona: PersonaUiState
+): String {
+    return members.firstOrNull { it.id == message.speakerId }
+        ?.persona
+        ?.displayName
+        ?.let { visiblePersonaName(it) }
+        ?: message.speakerName?.trim()?.takeIf { it.isNotEmpty() }
+        ?: visiblePersonaName(fallbackPersona.displayName, fallback = "AI")
 }
 
 data class LiveCallTranscriptLine(
@@ -617,8 +722,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private var rateLimitRetryMessageId: String? = null
 
-    var sendingSessionId by mutableStateOf<String?>(null)
-        private set
+    private val sendGate = SessionSendGate()
 
     var attachedImageUris by mutableStateOf<List<Uri>>(emptyList())
         private set
@@ -784,7 +888,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         get() = activeSession.bubbleGlassOverride
 
     val isSending: Boolean
-        get() = sendingSessionId == activeSessionId
+        get() = sendGate.isSending(activeSessionId)
+
+    private fun claimSend(sessionId: String): String? {
+        return sendGate.claim(sessionId)
+    }
+
+    private fun releaseSend(sessionId: String, token: String) {
+        sendGate.release(sessionId, token)
+    }
 
     val activeApiKeyLabel: String?
         get() = savedApiKeys[persona.vendor.id]?.let(apiKeyManager::mask)
@@ -935,23 +1047,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val message = draft.trim()
         val imageUris = attachedImageUris
         if (message.isEmpty() && imageUris.isEmpty()) return
-        if (activeSession.normalizedMembers().size > 1) {
-            sendGroupDraft(message, imageUris)
+        val sessionId = activeSessionId
+        val session = activeSession
+        val members = session.normalizedMembers()
+        val targetMember = members.firstOrNull { it.id == session.activeMemberId } ?: members.first()
+        val targetPersona = targetMember.persona
+        val sendToken = claimSend(sessionId) ?: return
+        if (members.size > 1) {
+            sendGroupDraft(message, imageUris, sessionId, session, sendToken)
             return
         }
         if (
             animeImageModeEnabled &&
             imageUris.isEmpty() &&
-            persona.vendor != ApiVendor.Google &&
+            targetPersona.vendor != ApiVendor.Google &&
             shouldOfferAnimeImageSearch(message.lowercase(Locale.US))
         ) {
-            requestAnimeImageFromDraft(message)
+            requestAnimeImageFromDraft(message, sessionId, sendToken)
             return
         }
         viewModelScope.launch {
-            val provider = persona.vendor
-            val sessionId = activeSessionId
-            val session = activeSession
+            try {
+            val provider = targetPersona.vendor
             val content = message.ifBlank { "Please respond to this image." }
             if (imageUris.isEmpty()) {
                 val localReply = localAppAwarenessReply(content)
@@ -979,8 +1096,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 chatError = "Add a ${provider.label} API key first."
                 return@launch
             }
-            if (imageUris.isNotEmpty() && !geminiChatService.supportsImageInput(provider, persona.model)) {
-                chatError = "${persona.model} does not support image input. Pick a vision model or remove the image."
+            if (imageUris.isNotEmpty() && !geminiChatService.supportsImageInput(provider, targetPersona.model)) {
+                chatError = "${targetPersona.model} does not support image input. Pick a vision model or remove the image."
                 return@launch
             }
             if (webSearchEnabled && !canUseWebSearch) {
@@ -998,7 +1115,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             draft = ""
             attachedImageUris = emptyList()
             chatError = null
-            sendingSessionId = sessionId
             appendMessage(
                 sessionId = sessionId,
                 message = userMessage,
@@ -1038,7 +1154,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         )
                         return@launch
                     }
-                    sendingSessionId = null
                     handleSendFailure(throwable, userMessage.id)
                     return@launch
                 }
@@ -1062,7 +1177,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             userMessage = userMessage
                         )
                     ) {
-                        sendingSessionId = null
                         return@launch
                     }
                     appendModelResponseOrRecover(
@@ -1070,7 +1184,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         session = session,
                         rawText = plan.text
                     )
-                    sendingSessionId = null
                     return@launch
                 }
 
@@ -1101,7 +1214,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         }
                         val reply = finalResult.getOrElse { throwable ->
-                            sendingSessionId = null
                             handleSendFailure(throwable, userMessage.id)
                             return@launch
                         }
@@ -1111,7 +1223,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             session = session,
                             rawText = reply.text
                         )
-                        sendingSessionId = null
                     }
 
                     "anime_image_search" -> {
@@ -1122,11 +1233,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             request = request,
                             preset = preset
                         )
-                        sendingSessionId = null
                     }
 
                     else -> {
-                        sendingSessionId = null
                         val cleanResponse = cleanModelResponse(
                             raw = plan.text.ifBlank { "That tool is not available in this build." },
                             speakerName = session.persona.displayName
@@ -1163,7 +1272,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val reply = result.getOrElse { throwable ->
-                sendingSessionId = null
                 handleSendFailure(throwable, userMessage.id)
                 return@launch
             }
@@ -1173,15 +1281,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 session = session,
                 rawText = reply.text
             )
-            sendingSessionId = null
+            } finally {
+                releaseSend(sessionId, sendToken)
+            }
         }
     }
 
     fun continueNarrative() {
-        if (sendingSessionId != null) return
+        val sessionId = activeSessionId
+        val session = activeSession
+        val sendToken = claimSend(sessionId) ?: return
         viewModelScope.launch {
-            val sessionId = activeSessionId
-            val session = activeSession
+            try {
             val members = session.normalizedMembers()
             val targetMember = members.firstOrNull { it.id == session.activeMemberId } ?: members.first()
             val provider = targetMember.persona.vendor
@@ -1207,7 +1318,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             """.trimIndent()
 
             chatError = null
-            sendingSessionId = sessionId
             val result = retryTemporaryUnavailable {
                 sendManagedMessage(
                     sessionId = sessionId,
@@ -1227,7 +1337,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             val reply = result.getOrElse { throwable ->
-                sendingSessionId = null
                 chatError = friendlySendError(throwable)
                 return@launch
             }
@@ -1238,22 +1347,29 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 rawText = reply.text,
                 speaker = targetMember.takeIf { members.size > 1 }
             )
-            sendingSessionId = null
+            } finally {
+                releaseSend(sessionId, sendToken)
+            }
         }
     }
 
-    private fun sendGroupDraft(message: String, imageUris: List<Uri>) {
+    private fun sendGroupDraft(
+        message: String,
+        imageUris: List<Uri>,
+        sessionId: String,
+        session: ChatSession,
+        sendToken: String
+    ) {
         val cleanMessage = message.trim()
         if (cleanMessage.isEmpty() && imageUris.isEmpty()) return
         val normalizedMessage = cleanMessage.lowercase(Locale.US)
         if (animeImageModeEnabled && imageUris.isEmpty() && shouldOfferAnimeImageSearch(normalizedMessage)) {
-            requestAnimeImageFromDraft(cleanMessage)
+            requestAnimeImageFromDraft(cleanMessage, sessionId, sendToken)
             return
         }
 
         viewModelScope.launch {
-            val sessionId = activeSessionId
-            val session = activeSession
+            try {
             val members = session.normalizedMembers()
             val content = cleanMessage.ifBlank { "Please respond to this image." }
             if (imageUris.isEmpty()) {
@@ -1348,7 +1464,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             draft = ""
             attachedImageUris = emptyList()
             chatError = routingWarning
-            sendingSessionId = sessionId
             val userMessage = ChatMessage(role = "user", content = content, imageUris = imageUris)
             appendMessage(
                 sessionId = sessionId,
@@ -1368,7 +1483,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             turnSpeakers.forEachIndexed { turnIndex, member ->
                 runCatching {
                         val memberApiKey = resolvedApiKey(member)
-                        val currentHistory = activeSession.messages
+                        val currentHistory = sessions.firstOrNull { it.id == sessionId }?.messages
+                            ?: session.messages
                         val memberInput = groupMemberInput(
                             originalUserMessage = toolAugmentedContent,
                             member = member,
@@ -1418,7 +1534,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 routingWarning != null -> routingWarning
                 else -> null
             }
-            sendingSessionId = null
+            } finally {
+                releaseSend(sessionId, sendToken)
+            }
         }
     }
 
@@ -1445,8 +1563,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setMessageReaction(messageId: String, reaction: String?) {
+        if (reaction != null && reaction !in SUPPORTED_MESSAGE_REACTIONS) return
+        val session = activeSession
+        val updatedMessages = toggleMessageReaction(session.messages, messageId, reaction)
+        if (updatedMessages === session.messages) return
+        updateActiveSession { session ->
+            session.copy(messages = updatedMessages)
+        }
+    }
+
     fun retryMessage(messageId: String) {
-        if (sendingSessionId != null) return
+        if (sendGate.isSending(activeSessionId)) return
         val session = activeSession
         val targetIndex = session.messages.indexOfFirst { it.id == messageId }
         if (targetIndex < 0) return
@@ -1664,22 +1792,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun requestAnimeImage(request: String) {
         val cleanRequest = request.trim()
         if (cleanRequest.isEmpty()) return
+        val sessionId = activeSessionId
+        val sendToken = claimSend(sessionId) ?: return
         viewModelScope.launch {
-            requestAnimeImageInternal(cleanRequest, clearDraft = false)
+            try {
+                requestAnimeImageInternal(cleanRequest, clearDraft = false, sessionId = sessionId)
+            } finally {
+                releaseSend(sessionId, sendToken)
+            }
         }
     }
 
-    private fun requestAnimeImageFromDraft(request: String) {
+    private fun requestAnimeImageFromDraft(request: String, sessionId: String, sendToken: String) {
         val cleanRequest = request.trim()
-        if (cleanRequest.isEmpty()) return
+        if (cleanRequest.isEmpty()) {
+            releaseSend(sessionId, sendToken)
+            return
+        }
         viewModelScope.launch {
-            requestAnimeImageInternal(cleanRequest, clearDraft = true)
+            try {
+                requestAnimeImageInternal(cleanRequest, clearDraft = true, sessionId = sessionId)
+            } finally {
+                releaseSend(sessionId, sendToken)
+            }
         }
     }
 
     private suspend fun requestAnimeImageInternal(
         cleanRequest: String,
-        clearDraft: Boolean
+        clearDraft: Boolean,
+        sessionId: String
     ) {
         val r34ApiKey = apiKeyManager.keyForRule34Api()
         val r34UserId = apiKeyManager.userIdForRule34()
@@ -1693,7 +1835,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val sessionId = activeSessionId
         val userMessage = ChatMessage(role = "user", content = cleanRequest)
         val loadingMessageId = UUID.randomUUID().toString()
         val loadingMessage = ChatMessage(
@@ -1822,7 +1963,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 request = content,
                 preset = animeImagePreset
             )
-            sendingSessionId = null
             return
         }
 
@@ -1847,7 +1987,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             val reply = finalResult.getOrElse { throwable ->
-                sendingSessionId = null
                 handleSendFailure(throwable, userMessage.id)
                 return
             }
@@ -1857,11 +1996,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 session = session,
                 rawText = reply.text
             )
-            sendingSessionId = null
             return
         }
 
-        sendingSessionId = null
     }
 
     fun dismissRateLimitDialog() {
@@ -4098,6 +4235,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun savePersona() {
+        updateActiveSession { session ->
+            val members = session.normalizedMembers().map { member ->
+                member.copy(
+                    persona = member.persona.copy(
+                        displayName = visiblePersonaName(member.persona.displayName)
+                    )
+                )
+            }
+            val activeId = session.activeMemberId.takeIf { id -> members.any { it.id == id } }
+                ?: members.first().id
+            session.copy(
+                members = members,
+                activeMemberId = activeId,
+                persona = members.first { it.id == activeId }.persona,
+                updatedAt = currentTime()
+            )
+        }
         personaSheetVisible = false
         persistChatState()
     }
@@ -4218,6 +4372,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         masterPrompt: String?
     ): Result<GeminiChatReply> {
         val managedHistory = mutableHistoryForSession(sessionId, history)
+        val effectiveMasterPrompt = masterPromptWithReactionFeedback(sessionId, masterPrompt)
         val requestId = reserveOutgoingRequest(
             sessionId = sessionId,
             vendor = vendor,
@@ -4225,10 +4380,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 persona = persona,
                 history = managedHistory,
                 userInput = userInput,
-                masterPrompt = masterPrompt
+                masterPrompt = effectiveMasterPrompt
             ),
             historyContents = managedHistory.map { it.content },
-            systemPrompt = masterPrompt,
+            systemPrompt = effectiveMasterPrompt,
             userInput = userInput
         )
         return geminiChatService.sendMessage(
@@ -4240,7 +4395,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             safetyLevel = safetyLevel,
             images = images,
             webSearchEnabled = webSearchEnabled,
-            masterPrompt = masterPrompt
+            masterPrompt = effectiveMasterPrompt
         ).also { result ->
             result.onSuccess { reply -> tokenBudget.settle(requestId, reply.totalTokenCount) }
                 .onFailure { tokenBudget.release(requestId) }
@@ -4260,6 +4415,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         masterPrompt: String?
     ): Result<GeminiToolPlan> {
         val managedHistory = mutableHistoryForSession(sessionId, history)
+        val effectiveMasterPrompt = masterPromptWithReactionFeedback(sessionId, masterPrompt)
         val requestId = reserveOutgoingRequest(
             sessionId = sessionId,
             vendor = vendor,
@@ -4268,10 +4424,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 history = managedHistory,
                 userInput = userInput,
                 enabledTools = enabledTools,
-                masterPrompt = masterPrompt
+                masterPrompt = effectiveMasterPrompt
             ),
             historyContents = managedHistory.map { it.content },
-            systemPrompt = masterPrompt,
+            systemPrompt = effectiveMasterPrompt,
             userInput = userInput
         )
         return geminiChatService.planToolUse(
@@ -4283,11 +4439,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             safetyLevel = safetyLevel,
             images = images,
             enabledTools = enabledTools,
-            masterPrompt = masterPrompt
+            masterPrompt = effectiveMasterPrompt
         ).also { result ->
             result.onSuccess { plan -> tokenBudget.settle(requestId, plan.toReply().totalTokenCount) }
                 .onFailure { tokenBudget.release(requestId) }
         }
+    }
+
+    private fun masterPromptWithReactionFeedback(sessionId: String, masterPrompt: String?): String? {
+        val session = sessions.firstOrNull { it.id == sessionId } ?: return masterPrompt
+        val feedback = recentReactionFeedback(
+            history = session.messages,
+            members = session.normalizedMembers(),
+            fallbackPersona = session.persona
+        )
+        return listOfNotNull(
+            masterPrompt?.takeIf { it.isNotBlank() },
+            feedback
+        ).joinToString("\n\n").takeIf { it.isNotBlank() }
     }
 
     private fun mutableHistoryForSession(
@@ -5486,6 +5655,11 @@ private fun groupDirectorPrompt(
         val speaker = if (message.role == "user") "User" else message.speakerName ?: "AI"
         "$speaker: ${message.content.take(900)}"
     }.takeLast(8_000)
+    val reactionFeedback = recentReactionFeedback(
+        history = history,
+        members = members,
+        fallbackPersona = members.first().persona
+    )
     return """
         You are the hidden Director of a multi-AI room. Select which members should answer the newest user message.
         Return JSON only, matching the schema. Use only the aliases M1 through M${members.size}.
@@ -5503,6 +5677,9 @@ private fun groupDirectorPrompt(
 
         Recent conversation:
         ${recentConversation.ifBlank { "(none)" }}
+
+        Recent reaction feedback:
+        ${reactionFeedback ?: "(none)"}
 
         New user message:
         $userMessage
@@ -6421,7 +6598,7 @@ private fun String.toCreateDraftState(): CreateDraftState? {
     }.getOrNull()
 }
 
-private fun ChatMessage.toJson(): JSONObject {
+internal fun ChatMessage.toJson(): JSONObject {
     return JSONObject()
         .put("id", id)
         .put("role", role)
@@ -6435,11 +6612,12 @@ private fun ChatMessage.toJson(): JSONObject {
                 imageUris.forEach { uri -> put(uri.toString()) }
             }
         )
+        .put("reaction", reaction ?: JSONObject.NULL)
         .put("deliveryStatus", deliveryStatus.name)
         .put("time", time)
 }
 
-private fun JSONObject.toChatMessage(): ChatMessage {
+internal fun JSONObject.toChatMessage(): ChatMessage {
     val imageUriArray = optJSONArray("imageUris")
     val restoredImageUris = buildList {
         if (imageUriArray != null) {
@@ -6459,6 +6637,7 @@ private fun JSONObject.toChatMessage(): ChatMessage {
         imageUris = restoredImageUris.take(12),
         remoteImageUrl = optNullableString("remoteImageUrl"),
         isImageLoading = false,
+        reaction = restoreMessageReaction(optNullableString("reaction")),
         deliveryStatus = optString("deliveryStatus")
             .let { stored -> MessageDeliveryStatus.entries.firstOrNull { it.name == stored } }
             ?: MessageDeliveryStatus.Delivered,

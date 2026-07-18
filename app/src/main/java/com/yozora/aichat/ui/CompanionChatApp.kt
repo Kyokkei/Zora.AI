@@ -179,6 +179,8 @@ import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -231,6 +233,8 @@ import com.yozora.aichat.ui.chat.ProjectUiState
 import com.yozora.aichat.ui.chat.QuotaUsageState
 import com.yozora.aichat.ui.chat.SafetyLevel
 import com.yozora.aichat.ui.chat.sessionLevelState
+import com.yozora.aichat.ui.chat.visiblePersonaName
+import com.yozora.aichat.ui.chat.visibleSpeakerName
 import com.yozora.aichat.ui.chat.TtsPreviewState
 import com.yozora.aichat.ui.chat.VoiceCallCameraFacing
 import com.yozora.aichat.ui.theme.AppAccent
@@ -830,6 +834,10 @@ fun CompanionChatApp(
             onSpeak = {
                 viewModel.speakMessage(message)
                 actionMessage = null
+            },
+            onReact = { reaction ->
+                viewModel.setMessageReaction(message.id, reaction)
+                actionMessage = null
             }
         )
     }
@@ -961,7 +969,7 @@ private fun ChatScreen(
         "all".contains(mentionQuery, ignoreCase = true)
     val mentionCandidates = if (groupMembers.size > 1 && mentionToken.startsWith("@")) {
         groupMembers.filter { member ->
-            member.persona.displayName.contains(mentionQuery, ignoreCase = true)
+            visiblePersonaName(member.persona.displayName).contains(mentionQuery, ignoreCase = true)
         }
     } else {
         emptyList()
@@ -1169,11 +1177,11 @@ private fun ChatScreen(
                                 border = BorderStroke(1.dp, AppStroke),
                                 modifier = Modifier.clickable {
                                     val prefix = draft.substring(0, mentionTokenStart)
-                                    onDraftChange("$prefix@${member.persona.displayName} ")
+                                    onDraftChange("$prefix@${visiblePersonaName(member.persona.displayName)} ")
                                 }
                             ) {
                                 Text(
-                                    text = "@${member.persona.displayName}",
+                                    text = "@${visiblePersonaName(member.persona.displayName)}",
                                     color = AppAccentSoft,
                                     style = MaterialTheme.typography.labelLarge,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
@@ -3319,7 +3327,17 @@ private fun MessageBubble(
     onSpeak: () -> Unit
 ) {
     val isUser = message.role == "user"
-    val speakerPersona = if (isUser) persona else groupMembers.firstOrNull { it.id == message.speakerId }?.persona ?: persona
+    val speakerPersona = if (isUser) {
+        persona
+    } else {
+        groupMembers.firstOrNull { it.id == message.speakerId }?.persona
+            ?: message.speakerName?.takeIf { it.isNotBlank() }?.let { storedName ->
+                groupMembers.firstOrNull {
+                    it.persona.displayName.equals(storedName, ignoreCase = true)
+                }?.persona
+            }
+            ?: persona
+    }
     val topRadius = if (compactTop) 12.dp else 22.dp
     val bottomRadius = if (compactBottom) 12.dp else 22.dp
     val glassEnabled = isRoleplayMode && bubbleGlassMode.appliesTo(isUser)
@@ -3371,7 +3389,7 @@ private fun MessageBubble(
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                     if (!isUser && groupMembers.size > 1 && showSpeakerLabel) {
                         Text(
-                            text = message.speakerName ?: speakerPersona.displayName,
+                            text = visibleSpeakerName(message, groupMembers, speakerPersona),
                             color = AppAccentSoft,
                             style = MaterialTheme.typography.labelLarge,
                             modifier = Modifier.padding(bottom = 8.dp)
@@ -3462,6 +3480,31 @@ private fun MessageBubble(
                         }
                     }
                 }
+            }
+        }
+        message.reaction?.let { reaction ->
+            Surface(
+                color = AppSurface.copy(alpha = 0.96f),
+                shape = RoundedCornerShape(999.dp),
+                border = BorderStroke(1.dp, AppStroke.copy(alpha = 0.82f)),
+                shadowElevation = 3.dp,
+                modifier = Modifier
+                    .align(if (isUser) Alignment.End else Alignment.Start)
+                    .padding(
+                        start = if (isUser) 0.dp else 44.dp,
+                        top = 4.dp,
+                        end = if (isUser) 4.dp else 0.dp
+                    )
+                    .semantics {
+                        contentDescription = "${reactionAccessibilityName(reaction)} reaction. Tap to change or remove"
+                    }
+                    .clickable { onMessageLongPress(message) }
+            ) {
+                Text(
+                    text = reaction,
+                    fontSize = 18.sp,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
             }
         }
         AnimatedVisibility(
@@ -3932,6 +3975,23 @@ private fun AnimeImageLoadingCard() {
     }
 }
 
+private val QuickMessageReactions = listOf("❤", "😂", "😭", "😡", "👍", "👎")
+private val ExtraMessageReactions = listOf("💀", "🤡", "💋", "🥺")
+
+private fun reactionAccessibilityName(reaction: String): String = when (reaction) {
+    "❤" -> "heart"
+    "😂" -> "laughing"
+    "😭" -> "crying"
+    "😡" -> "angry"
+    "👍" -> "thumbs up"
+    "👎" -> "thumbs down"
+    "💀" -> "skull"
+    "🤡" -> "clown"
+    "💋" -> "kiss"
+    "🥺" -> "pleading"
+    else -> "reaction"
+}
+
 @Composable
 private fun MessageActionSheet(
     message: ChatMessage,
@@ -3939,9 +3999,11 @@ private fun MessageActionSheet(
     onCopy: () -> Unit,
     onEdit: () -> Unit,
     onRetry: () -> Unit,
-    onSpeak: () -> Unit
+    onSpeak: () -> Unit,
+    onReact: (String) -> Unit
 ) {
     val isUser = message.role == "user"
+    var extraReactionsVisible by remember(message.id) { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -3984,6 +4046,64 @@ private fun MessageActionSheet(
                     color = AppTextPrimary,
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(top = 18.dp, bottom = 10.dp)
+                )
+                Text(
+                    text = "React",
+                    color = AppTextSecondary,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    QuickMessageReactions.forEach { reaction ->
+                        MessageReactionChoice(
+                            reaction = reaction,
+                            selected = message.reaction == reaction,
+                            onClick = { onReact(reaction) }
+                        )
+                    }
+                    Surface(
+                        color = if (extraReactionsVisible) AppAccentDim else AppSurface2,
+                        shape = CircleShape,
+                        border = BorderStroke(1.dp, if (extraReactionsVisible) AppAccent else AppStroke),
+                        modifier = Modifier
+                            .size(40.dp)
+                            .semantics { contentDescription = "More reactions" }
+                            .clickable { extraReactionsVisible = !extraReactionsVisible }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "+",
+                                color = if (extraReactionsVisible) AppAccentSoft else AppTextSecondary,
+                                fontSize = 26.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+                AnimatedVisibility(visible = extraReactionsVisible) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ExtraMessageReactions.forEach { reaction ->
+                            MessageReactionChoice(
+                                reaction = reaction,
+                                selected = message.reaction == reaction,
+                                onClick = { onReact(reaction) }
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider(
+                    color = AppStroke.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
                 )
                 ActionSheetRow(
                     icon = Icons.Rounded.ContentCopy,
@@ -4161,6 +4281,35 @@ private fun SpeechPreviewSheet(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MessageReactionChoice(
+    reaction: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val reactionName = reactionAccessibilityName(reaction)
+    Surface(
+        color = if (selected) AppAccentDim else AppSurface2,
+        shape = CircleShape,
+        border = BorderStroke(1.dp, if (selected) AppAccent else AppStroke.copy(alpha = 0.7f)),
+        shadowElevation = if (selected) 3.dp else 0.dp,
+        modifier = Modifier
+            .size(40.dp)
+            .semantics {
+                contentDescription = if (selected) {
+                    "Remove $reactionName reaction"
+                } else {
+                    "React with $reactionName"
+                }
+            }
+            .clickable(onClick = onClick)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(text = reaction, fontSize = 22.sp)
         }
     }
 }
@@ -6012,7 +6161,7 @@ private fun GroupMemberRow(
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = member.persona.displayName,
+                text = visiblePersonaName(member.persona.displayName),
                 color = if (selected) AppAccentSoft else AppTextPrimary,
                 style = MaterialTheme.typography.labelLarge,
                 maxLines = 1,
@@ -6945,7 +7094,7 @@ private fun ChatBackground.sameChoice(other: ChatBackground): Boolean {
 
 private fun ChatSession.groupTitle(): String {
     val members = members.ifEmpty { listOf(GroupMember(persona = persona)) }
-    return members.joinToString(" + ") { it.persona.displayName.ifBlank { "AI" } }
+    return members.joinToString(" + ") { visiblePersonaName(it.persona.displayName, fallback = "AI") }
 }
 
 private fun ChatSession.displayTitle(): String {

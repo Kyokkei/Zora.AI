@@ -1,4 +1,4 @@
-# Zora.AI ◈ (v2.2.6 / build 234)
+# Zora.AI ◈ (v2.2.7 / build 241)
 Zora.AI is a native Android AI companion built by Phan Chi Vy. 
 
 ## Screenshots
@@ -47,7 +47,13 @@ Grok 4.3 (Lowest Risk) ──> Gemini 3.5 ──> GPT-5.5 ──> Claude 4.8 (Hi
 
 ---
 
-## 🌟 What's New in v2.2.6
+## 🌟 What's New in v2.2.7
+* ❤️ **AI-Aware Message Reactions**: React with ten curated emoji without triggering an API call; recent reactions become lightweight, speaker-aware feedback on the next normal turn.
+* 🛡️ **Duplicate-Send Protection**: Per-session send gates stop rapid taps, slow Director routing, retries, and stale requests from duplicating user messages.
+* 👤 **Reliable Persona Names**: Blank or stale local persona/speaker labels now resolve through stable member identities and visible fallbacks.
+* 🔀 **Safer Multi-AI Sessions**: In-flight replies keep their original session and member context even when you switch chats.
+
+## Previously in v2.2.6
 * 💬 **Composer Polish**: A lighter liquid-glass typing area now includes inline Paste, Copy, Cut, Action, Dialogue, and Continue controls without Android's floating menu blocking short drafts.
 * 🎬 **Roleplay Shortcuts**: Cursor-aware Action and Dialogue helpers can insert or wrap selected text, while Continue invisibly asks the character to advance the story.
 * ✨ **Message Feedback**: New messages use a spring-like send animation and meaningful sent, delivered, and failed/retry indicators.

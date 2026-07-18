@@ -22,7 +22,8 @@ class SessionCloneTest {
         role = "model",
         content = "First reply",
         speakerId = firstMember.id,
-        speakerName = "One"
+        speakerName = "One",
+        reaction = "❤"
     )
     private val secondMessage = ChatMessage(
         id = "message-two",
@@ -69,6 +70,7 @@ class SessionCloneTest {
         assertEquals(2, clone.messages.size)
         assertFalse(clone.messages.map { it.id }.any { it in source.messages.map(ChatMessage::id) })
         assertEquals(clone.members.map { it.id }, clone.messages.map { it.speakerId })
+        assertEquals("❤", clone.messages.first().reaction)
         assertEquals(setOf(clone.messages.first().id), clone.archivedMessageIds)
         assertEquals(clone.members[1].id, clone.activeMemberId)
     }
