@@ -219,6 +219,7 @@ import com.yozora.aichat.ui.chat.ChatViewModel
 import com.yozora.aichat.ui.chat.CreateDraftState
 import com.yozora.aichat.ui.chat.GeminiLiveVoice
 import com.yozora.aichat.ui.chat.GeminiThinkingEffort
+import com.yozora.aichat.ui.chat.GroupResponseMode
 import com.yozora.aichat.ui.chat.GroupMember
 import com.yozora.aichat.ui.chat.HubCharacter
 import com.yozora.aichat.ui.chat.ImportPreviewState
@@ -448,6 +449,8 @@ fun CompanionChatApp(
                     sessionHeaderAvatarScale = viewModel.sessionHeaderAvatarScale,
                     sessionHeaderAvatarOffsetX = viewModel.sessionHeaderAvatarOffsetX,
                     sessionHeaderAvatarOffsetY = viewModel.sessionHeaderAvatarOffsetY,
+                    sessionHeaderAvatarRotation = viewModel.sessionHeaderAvatarRotation,
+                    sessionHeaderAvatarTransformNormalized = viewModel.sessionHeaderAvatarTransformNormalized,
                     background = viewModel.background,
                     bubbleGlassMode = viewModel.effectiveBubbleGlassMode,
                     roleplayLightMode = viewModel.roleplayLightModeEnabled,
@@ -515,6 +518,8 @@ fun CompanionChatApp(
                 sessionHeaderAvatarScale = viewModel.sessionHeaderAvatarScale,
                 sessionHeaderAvatarOffsetX = viewModel.sessionHeaderAvatarOffsetX,
                 sessionHeaderAvatarOffsetY = viewModel.sessionHeaderAvatarOffsetY,
+                sessionHeaderAvatarRotation = viewModel.sessionHeaderAvatarRotation,
+                sessionHeaderAvatarTransformNormalized = viewModel.sessionHeaderAvatarTransformNormalized,
                 background = viewModel.background,
                 bubbleGlassMode = BubbleGlassMode.Off,
                 roleplayLightMode = false,
@@ -669,14 +674,18 @@ fun CompanionChatApp(
             PersonaSettingsSheet(
                 persona = viewModel.persona,
                 groupMembers = viewModel.groupMembers,
+                groupMemberApiKeyLabels = viewModel.groupMemberApiKeyLabels,
                 showSessionHeaderControls = viewModel.showSessionHeaderControls,
                 sessionHeaderName = viewModel.sessionHeaderName,
                 sessionHeaderAvatarUri = viewModel.sessionHeaderAvatarUri,
                 sessionHeaderAvatarScale = viewModel.sessionHeaderAvatarScale,
                 sessionHeaderAvatarOffsetX = viewModel.sessionHeaderAvatarOffsetX,
                 sessionHeaderAvatarOffsetY = viewModel.sessionHeaderAvatarOffsetY,
+                sessionHeaderAvatarRotation = viewModel.sessionHeaderAvatarRotation,
+                sessionHeaderAvatarTransformNormalized = viewModel.sessionHeaderAvatarTransformNormalized,
                 activeMemberId = viewModel.activeMemberId,
-                responseRounds = viewModel.responseRounds,
+                groupResponseMode = viewModel.groupResponseMode,
+                directorApiKeyLabel = viewModel.directorApiKeyLabel,
                 memoryEnabled = viewModel.memoryEnabled,
                 storyLore = viewModel.storyLore,
                 levelSystemEnabled = viewModel.levelSystemEnabled,
@@ -685,6 +694,7 @@ fun CompanionChatApp(
                 bubbleGlassOverride = viewModel.sessionBubbleGlassOverride,
                 moreOptions = viewModel.morePersonaOptions,
                 activeApiKeyLabel = viewModel.activeApiKeyLabel,
+                activeIndividualApiKeyLabel = viewModel.activeIndividualApiKeyLabel,
                 tavilyApiKeyLabel = viewModel.tavilyApiKeyLabel,
                 rule34UserIdLabel = viewModel.rule34UserIdLabel,
                 rule34ApiKeyLabel = viewModel.rule34ApiKeyLabel,
@@ -700,7 +710,11 @@ fun CompanionChatApp(
                 onSelectMember = viewModel::selectGroupMember,
                 onAddMember = viewModel::addGroupMember,
                 onRemoveMember = viewModel::removeGroupMember,
-                onResponseRoundsChange = viewModel::updateResponseRounds,
+                onEditMemberApiKey = viewModel::openGroupMemberApiKeyDialogFor,
+                onClearMemberApiKey = viewModel::clearGroupMemberApiKeyFor,
+                onGroupResponseModeChange = viewModel::updateGroupResponseMode,
+                onEditDirectorApiKey = viewModel::openDirectorApiKeyDialog,
+                onClearDirectorApiKey = viewModel::clearDirectorApiKey,
                 onMemoryEnabledChange = viewModel::updateMemoryEnabled,
                 onLevelSystemEnabledChange = viewModel::updateLevelSystemEnabled,
                 onNameChange = viewModel::updatePersonaName,
@@ -719,14 +733,15 @@ fun CompanionChatApp(
                 onThinkingEffortChange = viewModel::updateThinkingEffort,
                 onTemperatureChange = viewModel::updateTemperature,
                 onAvatarCrop = viewModel::setAvatarCrop,
-                onSessionHeaderAvatarChange = viewModel::updateSessionHeaderAvatar,
-                onSessionHeaderAvatarTransform = viewModel::transformSessionHeaderAvatar,
+                onSessionHeaderAvatarCrop = viewModel::setSessionHeaderAvatarCrop,
                 onBackgroundChange = viewModel::updateBackground,
                 onBubbleGlassOverrideChange = viewModel::updateSessionBubbleGlassOverride,
                 onCustomBackgroundChange = viewModel::updateCustomBackground,
                 onToggleMore = viewModel::toggleMorePersonaOptions,
                 onEditApiKey = viewModel::openApiKeyDialog,
                 onClearApiKey = viewModel::clearApiKey,
+                onEditIndividualApiKey = viewModel::openGroupMemberApiKeyDialog,
+                onClearIndividualApiKey = viewModel::clearGroupMemberApiKey,
                 onEditTavilyKey = viewModel::openTavilyApiKeyDialog,
                 onClearTavilyKey = viewModel::clearTavilyApiKey,
                 onEditRule34UserId = viewModel::openRule34UserIdDialog,
@@ -879,6 +894,8 @@ private fun ChatScreen(
     sessionHeaderAvatarScale: Float,
     sessionHeaderAvatarOffsetX: Float,
     sessionHeaderAvatarOffsetY: Float,
+    sessionHeaderAvatarRotation: Float,
+    sessionHeaderAvatarTransformNormalized: Boolean,
     background: ChatBackground,
     bubbleGlassMode: BubbleGlassMode,
     roleplayLightMode: Boolean,
@@ -940,6 +957,8 @@ private fun ChatScreen(
     val mentionTokenStart = draft.indexOfLast { it.isWhitespace() } + 1
     val mentionToken = draft.substring(mentionTokenStart)
     val mentionQuery = mentionToken.takeIf { it.startsWith("@") }?.drop(1).orEmpty()
+    val showAllMention = groupMembers.size > 1 && mentionToken.startsWith("@") &&
+        "all".contains(mentionQuery, ignoreCase = true)
     val mentionCandidates = if (groupMembers.size > 1 && mentionToken.startsWith("@")) {
         groupMembers.filter { member ->
             member.persona.displayName.contains(mentionQuery, ignoreCase = true)
@@ -1027,6 +1046,8 @@ private fun ChatScreen(
                 sessionHeaderAvatarScale = sessionHeaderAvatarScale,
                 sessionHeaderAvatarOffsetX = sessionHeaderAvatarOffsetX,
                 sessionHeaderAvatarOffsetY = sessionHeaderAvatarOffsetY,
+                sessionHeaderAvatarRotation = sessionHeaderAvatarRotation,
+                sessionHeaderAvatarTransformNormalized = sessionHeaderAvatarTransformNormalized,
                 isOnline = isOnline,
                 onOpenSessions = onOpenSessions,
                 onOpenPersona = onOpenPersona,
@@ -1112,7 +1133,7 @@ private fun ChatScreen(
                     .padding(bottom = 10.dp)
             ) {
                 AnimatedVisibility(
-                    visible = mentionCandidates.isNotEmpty(),
+                    visible = showAllMention || mentionCandidates.isNotEmpty(),
                     enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
                     exit = fadeOut()
                 ) {
@@ -1121,6 +1142,26 @@ private fun ChatScreen(
                         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
+                        if (showAllMention) {
+                            item(key = "mention-all") {
+                                Surface(
+                                    color = AppAccentDim,
+                                    shape = RoundedCornerShape(16.dp),
+                                    border = BorderStroke(1.dp, AppAccent),
+                                    modifier = Modifier.clickable {
+                                        val prefix = draft.substring(0, mentionTokenStart)
+                                        onDraftChange("$prefix@all ")
+                                    }
+                                ) {
+                                    Text(
+                                        text = "@all",
+                                        color = AppAccentSoft,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                    )
+                                }
+                            }
+                        }
                         items(mentionCandidates, key = { it.id }) { member ->
                             Surface(
                                 color = AppSurface2,
@@ -1995,6 +2036,8 @@ private fun ChatHeader(
     sessionHeaderAvatarScale: Float,
     sessionHeaderAvatarOffsetX: Float,
     sessionHeaderAvatarOffsetY: Float,
+    sessionHeaderAvatarRotation: Float,
+    sessionHeaderAvatarTransformNormalized: Boolean,
     isOnline: Boolean,
     onOpenSessions: () -> Unit,
     onOpenPersona: () -> Unit,
@@ -2021,6 +2064,8 @@ private fun ChatHeader(
             avatarScale = sessionHeaderAvatarScale,
             avatarOffsetX = sessionHeaderAvatarOffsetX,
             avatarOffsetY = sessionHeaderAvatarOffsetY,
+            avatarRotation = sessionHeaderAvatarRotation,
+            normalizedOffsets = sessionHeaderAvatarTransformNormalized,
             size = 48,
             modifier = Modifier.clickable(onClick = onOpenPersona)
         )
@@ -4852,9 +4897,9 @@ private fun ChatInputBar(
                         modifier = Modifier.weight(1f)
                     )
                     ComposerShortcut(
-                        label = "「Dialogue」",
+                        label = "\"Dialogue\"",
                         enabled = !isSending,
-                        onClick = { wrapSelection("「", "」") },
+                        onClick = { wrapSelection("\"", "\"") },
                         modifier = Modifier.weight(1f)
                     )
                     if (fieldValue.selection.collapsed) {
@@ -5290,14 +5335,18 @@ private fun AnnotatedString.Builder.appendDelimited(
 private fun PersonaSettingsSheet(
     persona: PersonaUiState,
     groupMembers: List<GroupMember>,
+    groupMemberApiKeyLabels: Map<String, String>,
     showSessionHeaderControls: Boolean,
     sessionHeaderName: String,
     sessionHeaderAvatarUri: android.net.Uri?,
     sessionHeaderAvatarScale: Float,
     sessionHeaderAvatarOffsetX: Float,
     sessionHeaderAvatarOffsetY: Float,
+    sessionHeaderAvatarRotation: Float,
+    sessionHeaderAvatarTransformNormalized: Boolean,
     activeMemberId: String,
-    responseRounds: Int,
+    groupResponseMode: GroupResponseMode,
+    directorApiKeyLabel: String?,
     memoryEnabled: Boolean,
     storyLore: String,
     levelSystemEnabled: Boolean,
@@ -5306,6 +5355,7 @@ private fun PersonaSettingsSheet(
     bubbleGlassOverride: BubbleGlassMode?,
     moreOptions: Boolean,
     activeApiKeyLabel: String?,
+    activeIndividualApiKeyLabel: String?,
     tavilyApiKeyLabel: String?,
     rule34UserIdLabel: String?,
     rule34ApiKeyLabel: String?,
@@ -5321,7 +5371,11 @@ private fun PersonaSettingsSheet(
     onSelectMember: (String) -> Unit,
     onAddMember: () -> Unit,
     onRemoveMember: (String) -> Unit,
-    onResponseRoundsChange: (Int) -> Unit,
+    onEditMemberApiKey: (String) -> Unit,
+    onClearMemberApiKey: (String) -> Unit,
+    onGroupResponseModeChange: (GroupResponseMode) -> Unit,
+    onEditDirectorApiKey: () -> Unit,
+    onClearDirectorApiKey: () -> Unit,
     onMemoryEnabledChange: (Boolean) -> Unit,
     onLevelSystemEnabledChange: (Boolean) -> Unit,
     onNameChange: (String) -> Unit,
@@ -5340,14 +5394,15 @@ private fun PersonaSettingsSheet(
     onThinkingEffortChange: (GeminiThinkingEffort) -> Unit,
     onTemperatureChange: (Float) -> Unit,
     onAvatarCrop: (android.net.Uri, Float, Float, Float, Float) -> Unit,
-    onSessionHeaderAvatarChange: (android.net.Uri?) -> Unit,
-    onSessionHeaderAvatarTransform: (Float, Float, Float) -> Unit,
+    onSessionHeaderAvatarCrop: (android.net.Uri, Float, Float, Float, Float) -> Unit,
     onBackgroundChange: (ChatBackground) -> Unit,
     onBubbleGlassOverrideChange: (BubbleGlassMode?) -> Unit,
     onCustomBackgroundChange: (android.net.Uri?) -> Unit,
     onToggleMore: () -> Unit,
     onEditApiKey: () -> Unit,
     onClearApiKey: () -> Unit,
+    onEditIndividualApiKey: () -> Unit,
+    onClearIndividualApiKey: () -> Unit,
     onEditTavilyKey: () -> Unit,
     onClearTavilyKey: () -> Unit,
     onEditRule34UserId: () -> Unit,
@@ -5372,6 +5427,7 @@ private fun PersonaSettingsSheet(
     var selectedSection by remember { mutableStateOf(PersonaSettingsSection.Context) }
     var showTagPicker by remember { mutableStateOf(false) }
     var avatarCropRequest by remember { mutableStateOf<AvatarCropRequest?>(null) }
+    var sessionAvatarCropRequest by remember { mutableStateOf<AvatarCropRequest?>(null) }
     val imagePicker = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
         onResult = { uri ->
@@ -5380,7 +5436,9 @@ private fun PersonaSettingsSheet(
     )
     val sessionHeaderImagePicker = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
-        onResult = onSessionHeaderAvatarChange
+        onResult = { uri ->
+            if (uri != null) sessionAvatarCropRequest = AvatarCropRequest(uri = uri)
+        }
     )
     val backgroundPicker = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
@@ -5440,12 +5498,18 @@ private fun PersonaSettingsSheet(
                 PersonaSettingsSection.Context -> {
                     GroupEditor(
                         members = groupMembers,
+                        memberApiKeyLabels = groupMemberApiKeyLabels,
                         activeMemberId = activeMemberId,
-                        responseRounds = responseRounds,
+                        groupResponseMode = groupResponseMode,
+                        directorApiKeyLabel = directorApiKeyLabel,
                         onSelectMember = onSelectMember,
                         onAddMember = onAddMember,
                         onRemoveMember = onRemoveMember,
-                        onResponseRoundsChange = onResponseRoundsChange
+                        onEditMemberApiKey = onEditMemberApiKey,
+                        onClearMemberApiKey = onClearMemberApiKey,
+                        onGroupResponseModeChange = onGroupResponseModeChange,
+                        onEditDirectorApiKey = onEditDirectorApiKey,
+                        onClearDirectorApiKey = onClearDirectorApiKey
                     )
 
                     InstructionSection(
@@ -5508,14 +5572,30 @@ private fun PersonaSettingsSheet(
                             modifier = Modifier.padding(top = 4.dp)
                         )
 
-                        SessionHeaderAvatarEditor(
-                            fallbackPersona = persona,
-                            avatarUri = sessionHeaderAvatarUri,
-                            avatarScale = sessionHeaderAvatarScale,
-                            avatarOffsetX = sessionHeaderAvatarOffsetX,
-                            avatarOffsetY = sessionHeaderAvatarOffsetY,
+                        AvatarEditor(
+                            persona = persona.copy(
+                                displayName = sessionHeaderName.ifBlank { "Group" },
+                                avatarUri = sessionHeaderAvatarUri,
+                                avatarScale = sessionHeaderAvatarScale,
+                                avatarOffsetX = sessionHeaderAvatarOffsetX,
+                                avatarOffsetY = sessionHeaderAvatarOffsetY,
+                                avatarRotation = sessionHeaderAvatarRotation,
+                                avatarTransformNormalized = sessionHeaderAvatarTransformNormalized
+                            ),
                             onUpload = { sessionHeaderImagePicker.launch(arrayOf("image/*")) },
-                            onTransform = onSessionHeaderAvatarTransform
+                            onEdit = {
+                                sessionHeaderAvatarUri?.let { uri ->
+                                    sessionAvatarCropRequest = AvatarCropRequest(
+                                        uri = uri,
+                                        scale = sessionHeaderAvatarScale,
+                                        offsetX = sessionHeaderAvatarOffsetX,
+                                        offsetY = sessionHeaderAvatarOffsetY,
+                                        rotation = sessionHeaderAvatarRotation,
+                                        normalizedOffsets = sessionHeaderAvatarTransformNormalized
+                                    )
+                                }
+                            },
+                            uploadLabel = "Upload group avatar"
                         )
 
                         PersonaTextField(
@@ -5636,6 +5716,7 @@ private fun PersonaSettingsSheet(
                         persona = persona,
                         background = background,
                         activeApiKeyLabel = activeApiKeyLabel,
+                        activeIndividualApiKeyLabel = activeIndividualApiKeyLabel,
                         tavilyApiKeyLabel = tavilyApiKeyLabel,
                         rule34UserIdLabel = rule34UserIdLabel,
                         rule34ApiKeyLabel = rule34ApiKeyLabel,
@@ -5656,6 +5737,8 @@ private fun PersonaSettingsSheet(
                         onPickCustomBackground = { backgroundPicker.launch(arrayOf("image/*")) },
                         onEditApiKey = onEditApiKey,
                         onClearApiKey = onClearApiKey,
+                        onEditIndividualApiKey = onEditIndividualApiKey,
+                        onClearIndividualApiKey = onClearIndividualApiKey,
                         onEditTavilyKey = onEditTavilyKey,
                         onClearTavilyKey = onClearTavilyKey,
                         onEditRule34UserId = onEditRule34UserId,
@@ -5720,6 +5803,16 @@ private fun PersonaSettingsSheet(
             }
         )
     }
+    sessionAvatarCropRequest?.let { request ->
+        AvatarCropDialog(
+            request = request,
+            onDismiss = { sessionAvatarCropRequest = null },
+            onSave = { scale, offsetX, offsetY, rotation ->
+                onSessionHeaderAvatarCrop(request.uri, scale, offsetX, offsetY, rotation)
+                sessionAvatarCropRequest = null
+            }
+        )
+    }
 }
 
 @Composable
@@ -5759,15 +5852,22 @@ private fun PersonaSettingsSectionTabs(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun GroupEditor(
     members: List<GroupMember>,
+    memberApiKeyLabels: Map<String, String>,
     activeMemberId: String,
-    responseRounds: Int,
+    groupResponseMode: GroupResponseMode,
+    directorApiKeyLabel: String?,
     onSelectMember: (String) -> Unit,
     onAddMember: () -> Unit,
     onRemoveMember: (String) -> Unit,
-    onResponseRoundsChange: (Int) -> Unit
+    onEditMemberApiKey: (String) -> Unit,
+    onClearMemberApiKey: (String) -> Unit,
+    onGroupResponseModeChange: (GroupResponseMode) -> Unit,
+    onEditDirectorApiKey: () -> Unit,
+    onClearDirectorApiKey: () -> Unit
 ) {
     Column(modifier = Modifier.padding(top = 10.dp, bottom = 18.dp)) {
         Row(
@@ -5795,8 +5895,11 @@ private fun GroupEditor(
                         member = member,
                         selected = member.id == activeMemberId,
                         canRemove = members.size > 1,
+                        apiKeyLabel = memberApiKeyLabels[member.id],
                         onSelect = { onSelectMember(member.id) },
-                        onRemove = { onRemoveMember(member.id) }
+                        onRemove = { onRemoveMember(member.id) },
+                        onEditApiKey = { onEditMemberApiKey(member.id) },
+                        onClearApiKey = { onClearMemberApiKey(member.id) }
                     )
                     if (index != members.lastIndex) {
                         Box(
@@ -5840,22 +5943,49 @@ private fun GroupEditor(
         }
 
         Text(
-            text = "AI TURNS",
+            text = "RESPONSE ROUTING",
             color = AppTextPrimary,
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.padding(top = 18.dp)
         )
-        Slider(
-            value = responseRounds.toFloat(),
-            onValueChange = { onResponseRoundsChange(it.toInt().coerceIn(1, 3)) },
-            valueRange = 1f..3f,
-            steps = 1,
-            modifier = Modifier.fillMaxWidth()
-        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(top = 10.dp)
+        ) {
+            GroupResponseMode.entries.forEach { mode ->
+                val selected = mode == groupResponseMode
+                Surface(
+                    color = if (selected) AppAccentDim else AppSurface2,
+                    shape = RoundedCornerShape(999.dp),
+                    border = BorderStroke(1.dp, if (selected) AppAccent else AppStroke),
+                    modifier = Modifier.clickable { onGroupResponseModeChange(mode) }
+                ) {
+                    Text(
+                        text = mode.label,
+                        color = if (selected) AppAccentSoft else AppTextSecondary,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp)
+                    )
+                }
+            }
+        }
         Text(
-            text = "Each turn picks one AI to answer. Multi-AI chats rotate speakers before your next turn.",
+            text = if (groupResponseMode == GroupResponseMode.Auto) {
+                "The hidden Director chooses the 1–4 members most relevant to each message. Mentions and @all always override it."
+            } else {
+                "This mode uses fair rotation. Mentions and @all still override the fixed count."
+            },
             color = AppTextSecondary,
-            style = MaterialTheme.typography.bodyMedium
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 10.dp, bottom = 10.dp)
+        )
+        ApiKeySlot(
+            label = "Group Director key (Gemini Flash Lite)",
+            keyLabel = directorApiKeyLabel,
+            emptyText = "Required for Auto routing",
+            onEdit = onEditDirectorApiKey,
+            onClear = onClearDirectorApiKey
         )
     }
 }
@@ -5865,8 +5995,11 @@ private fun GroupMemberRow(
     member: GroupMember,
     selected: Boolean,
     canRemove: Boolean,
+    apiKeyLabel: String?,
     onSelect: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    onEditApiKey: () -> Unit,
+    onClearApiKey: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -5902,6 +6035,41 @@ private fun GroupMemberRow(
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 2.dp)
+            ) {
+                Text(
+                    text = apiKeyLabel?.let { "Key: $it" } ?: "Key: provider default",
+                    color = if (apiKeyLabel != null) AppAccentSoft else AppTextMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = onEditApiKey,
+                    contentPadding = PaddingValues(horizontal = 6.dp)
+                ) {
+                    Text(
+                        text = if (apiKeyLabel == null) "Set" else "Replace",
+                        color = AppAccentSoft,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+                if (apiKeyLabel != null) {
+                    TextButton(
+                        onClick = onClearApiKey,
+                        contentPadding = PaddingValues(horizontal = 6.dp)
+                    ) {
+                        Text(
+                            text = "Clear",
+                            color = Color(0xFFFFA0AA),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                }
+            }
         }
         if (canRemove) {
             IconButton(onClick = onRemove) {
@@ -5924,102 +6092,11 @@ private fun GroupMemberRow(
 }
 
 @Composable
-private fun SessionHeaderAvatarEditor(
-    fallbackPersona: PersonaUiState,
-    avatarUri: android.net.Uri?,
-    avatarScale: Float,
-    avatarOffsetX: Float,
-    avatarOffsetY: Float,
-    onUpload: () -> Unit,
-    onTransform: (Float, Float, Float) -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 12.dp, bottom = 20.dp)
-    ) {
-        Box(contentAlignment = Alignment.BottomEnd) {
-            Box(
-                modifier = Modifier
-                    .size(150.dp)
-                    .clip(CircleShape)
-                    .pointerInput(avatarUri) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            onTransform(zoom, pan.x, pan.y)
-                        }
-                    }
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(AppAccentSoft.copy(alpha = 0.45f), AppSurface2)
-                        )
-                    )
-                    .border(3.dp, AppAccentSoft, CircleShape)
-                    .padding(4.dp)
-            ) {
-                SessionHeaderAvatar(
-                    fallbackPersona = fallbackPersona,
-                    avatarUri = avatarUri,
-                    avatarScale = avatarScale,
-                    avatarOffsetX = avatarOffsetX,
-                    avatarOffsetY = avatarOffsetY,
-                    size = 142,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-            IconButton(
-                onClick = onUpload,
-                modifier = Modifier
-                    .offset(x = 2.dp, y = 2.dp)
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(AppSurface2)
-                    .border(1.dp, AppStroke, CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Upload,
-                    contentDescription = "Upload session avatar",
-                    tint = AppAccentSoft
-                )
-            }
-        }
-
-        Button(
-            onClick = onUpload,
-            colors = ButtonDefaults.buttonColors(containerColor = AppSurface),
-            border = BorderStroke(1.dp, AppStroke),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 18.dp)
-                .height(54.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Upload,
-                contentDescription = null,
-                tint = AppAccentSoft
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "Upload session avatar",
-                color = AppAccentSoft,
-                style = MaterialTheme.typography.labelLarge
-            )
-        }
-        Text(
-            text = "JPG, PNG or WebP. Pinch and drag to crop.",
-            color = AppTextSecondary,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(top = 8.dp)
-        )
-    }
-}
-
-@Composable
 private fun AvatarEditor(
     persona: PersonaUiState,
     onUpload: () -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    uploadLabel: String = "Upload avatar"
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -6080,7 +6157,7 @@ private fun AvatarEditor(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Upload avatar",
+                text = uploadLabel,
                 color = AppAccentSoft,
                 style = MaterialTheme.typography.labelLarge
             )
@@ -6611,6 +6688,7 @@ private fun MoreOptions(
     persona: PersonaUiState,
     background: ChatBackground,
     activeApiKeyLabel: String?,
+    activeIndividualApiKeyLabel: String?,
     tavilyApiKeyLabel: String?,
     rule34UserIdLabel: String?,
     rule34ApiKeyLabel: String?,
@@ -6631,6 +6709,8 @@ private fun MoreOptions(
     onPickCustomBackground: () -> Unit,
     onEditApiKey: () -> Unit,
     onClearApiKey: () -> Unit,
+    onEditIndividualApiKey: () -> Unit,
+    onClearIndividualApiKey: () -> Unit,
     onEditTavilyKey: () -> Unit,
     onClearTavilyKey: () -> Unit,
     onEditRule34UserId: () -> Unit,
@@ -6687,6 +6767,14 @@ private fun MoreOptions(
                         vendor = persona.vendor,
                         selected = persona.model,
                         onModelChange = onModelChange
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    ApiKeySlot(
+                        label = "Individual API key (optional)",
+                        keyLabel = activeIndividualApiKeyLabel,
+                        emptyText = "Using global provider key",
+                        onEdit = onEditIndividualApiKey,
+                        onClear = onClearIndividualApiKey
                     )
                     if (persona.vendor == ApiVendor.Google) {
                         Spacer(modifier = Modifier.height(12.dp))
@@ -7774,10 +7862,10 @@ private fun AvatarCropDialog(
     }
 }
 
-private fun formatRoleplayMessage(input: String, lightMode: Boolean): AnnotatedString {
+internal fun formatRoleplayMessage(input: String, lightMode: Boolean): AnnotatedString {
     val speechColor = Color(0xFFFF5D8F)
     val actionColor = if (lightMode) Color(0xFF1677C8) else Color(0xFF55B7FF)
-    val thoughtColor = if (lightMode) Color(0xFF17131A) else AppTextPrimary
+    val plainAndThoughtColor = AppTextPrimary
     return buildAnnotatedString {
         var index = 0
         var plainStart = 0
@@ -7788,7 +7876,7 @@ private fun formatRoleplayMessage(input: String, lightMode: Boolean): AnnotatedS
         }
 
         fun flushPlain(end: Int) {
-            appendSegment(plainStart, end, SpanStyle(color = thoughtColor))
+            appendSegment(plainStart, end, SpanStyle(color = plainAndThoughtColor))
         }
 
         while (index < input.length) {
@@ -7822,8 +7910,12 @@ private fun formatRoleplayMessage(input: String, lightMode: Boolean): AnnotatedS
 
             flushPlain(index)
             when {
-                isAction -> appendSegment(index + 1, closing, SpanStyle(color = actionColor))
-                isThought -> appendSegment(index, closing + 1, SpanStyle(color = thoughtColor))
+                isAction -> appendSegment(
+                    index + 1,
+                    closing,
+                    SpanStyle(color = actionColor, fontStyle = FontStyle.Italic)
+                )
+                isThought -> appendSegment(index, closing + 1, SpanStyle(color = plainAndThoughtColor))
                 else -> appendSegment(index, closing + 1, SpanStyle(color = speechColor))
             }
             index = closing + 1
@@ -8301,6 +8393,8 @@ private fun SessionHeaderAvatar(
     avatarScale: Float,
     avatarOffsetX: Float,
     avatarOffsetY: Float,
+    avatarRotation: Float,
+    normalizedOffsets: Boolean,
     size: Int,
     modifier: Modifier = Modifier
 ) {
@@ -8313,6 +8407,7 @@ private fun SessionHeaderAvatar(
         return
     }
 
+    val sessionAvatarSizePx = with(LocalDensity.current) { size.dp.toPx() }
     Box(
         modifier = modifier
             .size(size.dp)
@@ -8328,8 +8423,9 @@ private fun SessionHeaderAvatar(
                 .graphicsLayer(
                     scaleX = avatarScale,
                     scaleY = avatarScale,
-                    translationX = avatarOffsetX,
-                    translationY = avatarOffsetY
+                    translationX = if (normalizedOffsets) avatarOffsetX * sessionAvatarSizePx else avatarOffsetX,
+                    translationY = if (normalizedOffsets) avatarOffsetY * sessionAvatarSizePx else avatarOffsetY,
+                    rotationZ = avatarRotation
                 )
         )
     }
@@ -8600,20 +8696,20 @@ private fun DiscoverScreen(
     var communitySource by remember { mutableStateOf(false) }
 
     val customCharacters = viewModel.sessions.filter { session ->
-        session.persona.displayName.isNotBlank()
+        session.members.any { it.persona.displayName.isNotBlank() }
     }.sortedWith(
         compareByDescending<ChatSession> { it.pinnedAtMillis ?: 0L }
             .thenByDescending { it.isFavorite }
     ).map { session ->
         PresetCharacter(
             sessionId = session.id,
-            name = session.persona.displayName,
+            name = session.displayTitle(),
             author = session.persona.author.ifBlank { "@You" },
             tagline = session.persona.tagline.ifBlank { "Custom character" },
             greeting = session.preview.takeIf { it != "No messages yet" && it.isNotBlank() } ?: "",
             prompt = session.persona.instructionPrompt,
             tags = session.persona.traits,
-            avatarUri = session.persona.avatarUri,
+            avatarUri = session.headerAvatarUri ?: session.persona.avatarUri,
             isFavorite = session.isFavorite,
             pinnedAtMillis = session.pinnedAtMillis
         )
@@ -9964,16 +10060,17 @@ private fun ChatsScreen(
                                     .background(Brush.linearGradient(listOf(LocalRoleplayColors.current.accent, Color(0xFF8B5CF6)))),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (session.persona.avatarUri != null) {
+                                val menuAvatarUri = session.headerAvatarUri ?: session.persona.avatarUri
+                                if (menuAvatarUri != null) {
                                     Image(
-                                        painter = rememberAsyncImagePainter(session.persona.avatarUri),
-                                        contentDescription = "${session.persona.displayName} avatar",
+                                        painter = rememberAsyncImagePainter(menuAvatarUri),
+                                        contentDescription = "${session.displayTitle()} avatar",
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 } else {
                                     Text(
-                                        text = session.persona.displayName.take(1).uppercase(),
+                                        text = session.displayTitle().take(1).uppercase(),
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 20.sp
@@ -9988,7 +10085,7 @@ private fun ChatsScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = session.persona.displayName.ifBlank { "New Persona" },
+                                        text = session.displayTitle(),
                                         color = LocalRoleplayColors.current.textPrimary,
                                         style = MaterialTheme.typography.labelLarge,
                                         maxLines = 1,

@@ -24,9 +24,13 @@ data class ChatSessionEntity(
     val headerAvatarScale: Float = 1.0f,
     val headerAvatarOffsetX: Float = 0f,
     val headerAvatarOffsetY: Float = 0f,
+    val headerAvatarRotation: Float = 0f,
+    val headerAvatarTransformNormalized: Boolean = false,
     val personaJson: String,
     val activeMemberId: String,
     val responseRounds: Int,
+    val groupResponseMode: String = "",
+    val directorApiKey: String = "",
     val memoryEnabled: Boolean = true,
     val storyLore: String = "",
     val archivedContext: String = "",
@@ -60,6 +64,7 @@ data class GroupMemberEntity(
     @PrimaryKey val id: String,
     val sessionId: String,
     val personaJson: String,
+    val apiKey: String = "",
     val position: Int
 )
 

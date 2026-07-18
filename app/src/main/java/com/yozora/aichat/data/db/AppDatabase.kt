@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MessageEntity::class,
         TtsAudioCacheEntity::class
     ],
-    version = 13,
+    version = 15,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -43,7 +43,9 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_9_10,
                         MIGRATION_10_11,
                         MIGRATION_11_12,
-                        MIGRATION_12_13
+                        MIGRATION_12_13,
+                        MIGRATION_13_14,
+                        MIGRATION_14_15
                     )
                     .build()
                     .also { instance = it }
@@ -183,6 +185,21 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE `messages` ADD COLUMN `deliveryStatus` TEXT NOT NULL DEFAULT 'Delivered'"
                 )
+            }
+        }
+
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `groupResponseMode` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `directorApiKey` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `group_members` ADD COLUMN `apiKey` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `headerAvatarRotation` REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `headerAvatarTransformNormalized` INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

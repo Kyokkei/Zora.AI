@@ -8,6 +8,7 @@ import com.yozora.aichat.ui.chat.ChatBackground
 import com.yozora.aichat.ui.chat.ChatMessage
 import com.yozora.aichat.ui.chat.ChatSession
 import com.yozora.aichat.ui.chat.GroupMember
+import com.yozora.aichat.ui.chat.GroupResponseMode
 import com.yozora.aichat.ui.chat.GeminiThinkingEffort
 import com.yozora.aichat.ui.chat.InstructionMode
 import com.yozora.aichat.ui.chat.MessageDeliveryStatus
@@ -43,10 +44,19 @@ class ChatRepository private constructor(
                 headerAvatarScale = sessionEntity.headerAvatarScale,
                 headerAvatarOffsetX = sessionEntity.headerAvatarOffsetX,
                 headerAvatarOffsetY = sessionEntity.headerAvatarOffsetY,
+                headerAvatarRotation = sessionEntity.headerAvatarRotation,
+                headerAvatarTransformNormalized = sessionEntity.headerAvatarTransformNormalized,
                 persona = activePersona,
                 members = members,
                 activeMemberId = activeId,
-                responseRounds = sessionEntity.responseRounds.coerceIn(1, 3),
+                groupResponseMode = GroupResponseMode.entries.firstOrNull {
+                    it.name == sessionEntity.groupResponseMode
+                } ?: when (sessionEntity.responseRounds.coerceIn(1, 3)) {
+                    2 -> GroupResponseMode.Two
+                    3 -> GroupResponseMode.Three
+                    else -> GroupResponseMode.One
+                },
+                directorApiKey = sessionEntity.directorApiKey,
                 memoryEnabled = sessionEntity.memoryEnabled,
                 storyLore = sessionEntity.storyLore.ifBlank {
                     sequence {
@@ -82,9 +92,15 @@ class ChatRepository private constructor(
                 headerAvatarScale = session.headerAvatarScale,
                 headerAvatarOffsetX = session.headerAvatarOffsetX,
                 headerAvatarOffsetY = session.headerAvatarOffsetY,
+                headerAvatarRotation = session.headerAvatarRotation,
+                headerAvatarTransformNormalized = session.headerAvatarTransformNormalized,
                 personaJson = session.persona.toJsonString(),
                 activeMemberId = session.activeMemberId,
-                responseRounds = session.responseRounds.coerceIn(1, 3),
+                responseRounds = session.groupResponseMode.fixedCount
+                    ?.coerceAtMost(3)
+                    ?: 1,
+                groupResponseMode = session.groupResponseMode.name,
+                directorApiKey = session.directorApiKey,
                 memoryEnabled = session.memoryEnabled,
                 storyLore = session.storyLore.take(16_000),
                 archivedContext = session.archivedContext,
@@ -110,6 +126,7 @@ class ChatRepository private constructor(
                     id = member.id,
                     sessionId = session.id,
                     personaJson = member.persona.toJsonString(),
+                    apiKey = member.apiKey,
                     position = index
                 )
             }
@@ -202,7 +219,8 @@ private fun ChatSession.normalizedMembersForDb(): List<GroupMember> {
 private fun GroupMemberEntity.toGroupMember(): GroupMember {
     return GroupMember(
         id = id,
-        persona = personaJson.toPersonaUiState()
+        persona = personaJson.toPersonaUiState(),
+        apiKey = apiKey
     )
 }
 

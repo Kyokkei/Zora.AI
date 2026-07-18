@@ -13,7 +13,7 @@ android {
         applicationId = "com.yozora.aichat"
         minSdk = 26
         targetSdk = 35
-        versionCode = 234
+        versionCode = 239
         versionName = "2.2.6"
 
         val googleWebClientId = providers.gradleProperty("ZORA_GOOGLE_WEB_CLIENT_ID")
@@ -90,4 +90,5 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

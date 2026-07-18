@@ -157,6 +157,17 @@ enum class GeminiThinkingEffort(
     High("High", 8192)
 }
 
+enum class GroupResponseMode(
+    val label: String,
+    val fixedCount: Int?
+) {
+    Auto("Auto", null),
+    One("1", 1),
+    Two("2", 2),
+    Three("3", 3),
+    All("All", Int.MAX_VALUE)
+}
+
 enum class InstructionMode(
     val label: String
 ) {
@@ -262,7 +273,8 @@ enum class VoiceCallCameraFacing {
 
 data class GroupMember(
     val id: String = UUID.randomUUID().toString(),
-    val persona: PersonaUiState = PersonaUiState()
+    val persona: PersonaUiState = PersonaUiState(),
+    val apiKey: String = ""
 )
 
 data class ProjectUiState(
@@ -280,10 +292,13 @@ data class ChatSession(
     val headerAvatarScale: Float = 1.0f,
     val headerAvatarOffsetX: Float = 0f,
     val headerAvatarOffsetY: Float = 0f,
+    val headerAvatarRotation: Float = 0f,
+    val headerAvatarTransformNormalized: Boolean = false,
     val persona: PersonaUiState = PersonaUiState(),
     val members: List<GroupMember> = listOf(GroupMember(persona = persona)),
     val activeMemberId: String = members.firstOrNull()?.id ?: "",
-    val responseRounds: Int = 1,
+    val groupResponseMode: GroupResponseMode = GroupResponseMode.Auto,
+    val directorApiKey: String = "",
     val memoryEnabled: Boolean = true,
     val storyLore: String = "",
     val archivedContext: String = "",
@@ -447,16 +462,18 @@ private data class PendingSummarizationRequest(
     val aggressive: Boolean
 )
 
-private enum class ApiKeyDialogTarget {
-    Provider,
-    GoogleAutoFill,
-    Summarizer,
-    Tavily,
-    Rule34UserId,
-    Rule34ApiKey,
-    ElevenLabsKey,
-    ElevenLabsVoiceId,
-    ElevenLabsModelId
+private sealed class ApiKeyDialogTarget {
+    object Provider : ApiKeyDialogTarget()
+    object GoogleAutoFill : ApiKeyDialogTarget()
+    object Summarizer : ApiKeyDialogTarget()
+    object Tavily : ApiKeyDialogTarget()
+    object Rule34UserId : ApiKeyDialogTarget()
+    object Rule34ApiKey : ApiKeyDialogTarget()
+    object ElevenLabsKey : ApiKeyDialogTarget()
+    object ElevenLabsVoiceId : ApiKeyDialogTarget()
+    object ElevenLabsModelId : ApiKeyDialogTarget()
+    object DirectorKey : ApiKeyDialogTarget()
+    data class GroupMemberKey(val memberId: String) : ApiKeyDialogTarget()
 }
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -537,7 +554,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     var apiKeyDraft by mutableStateOf("")
         private set
 
-    private var apiKeyDialogTarget = ApiKeyDialogTarget.Provider
+    private var apiKeyDialogTarget: ApiKeyDialogTarget = ApiKeyDialogTarget.Provider
 
     var savedApiKeys by mutableStateOf<Map<String, String>>(emptyMap())
         private set
@@ -724,14 +741,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val sessionHeaderAvatarOffsetY: Float
         get() = activeSession.headerAvatarOffsetY
 
+    val sessionHeaderAvatarRotation: Float
+        get() = activeSession.headerAvatarRotation
+
+    val sessionHeaderAvatarTransformNormalized: Boolean
+        get() = activeSession.headerAvatarTransformNormalized
+
     val showSessionHeaderControls: Boolean
         get() = activeSession.normalizedMembers().size > 1
 
     val activeMemberId: String
         get() = activeGroupMember.id
 
-    val responseRounds: Int
-        get() = activeSession.responseRounds.coerceIn(1, 3)
+    val groupResponseMode: GroupResponseMode
+        get() = activeSession.groupResponseMode
+
+    val directorApiKeyLabel: String?
+        get() = activeSession.directorApiKey.takeIf { it.isNotBlank() }?.let(apiKeyManager::mask)
 
     val memoryEnabled: Boolean
         get() = activeSession.memoryEnabled
@@ -763,6 +789,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val activeApiKeyLabel: String?
         get() = savedApiKeys[persona.vendor.id]?.let(apiKeyManager::mask)
 
+    val activeIndividualApiKeyLabel: String?
+        get() = activeGroupMember.apiKey.takeIf { it.isNotBlank() }?.let(apiKeyManager::mask)
+
+    val groupMemberApiKeyLabels: Map<String, String>
+        get() = groupMembers.mapNotNull { member ->
+            member.apiKey.takeIf { it.isNotBlank() }
+                ?.let { key -> member.id to apiKeyManager.mask(key) }
+        }.toMap()
+
     val apiKeyDialogTitle: String
         get() = when (apiKeyDialogTarget) {
             ApiKeyDialogTarget.Provider -> "${persona.vendor.label} API key"
@@ -774,6 +809,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             ApiKeyDialogTarget.ElevenLabsKey -> "ElevenLabs API key"
             ApiKeyDialogTarget.ElevenLabsVoiceId -> "ElevenLabs voice ID"
             ApiKeyDialogTarget.ElevenLabsModelId -> "ElevenLabs model ID"
+            ApiKeyDialogTarget.DirectorKey -> "Group Director API key"
+            is ApiKeyDialogTarget.GroupMemberKey -> "API key for ${activeGroupMember.persona.displayName}"
         }
 
     val apiKeyDialogSecure: Boolean
@@ -1148,7 +1185,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val members = session.normalizedMembers()
             val targetMember = members.firstOrNull { it.id == session.activeMemberId } ?: members.first()
             val provider = targetMember.persona.vendor
-            val apiKey = apiKeyManager.keyForProvider(provider.id)
+            val apiKey = resolvedApiKeyOrNull(targetMember)
             if (apiKey.isNullOrBlank()) {
                 selectGroupMember(targetMember.id)
                 apiKeyDialogTarget = ApiKeyDialogTarget.Provider
@@ -1166,7 +1203,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val internalRequest = """
                 [Narrator direction; this is not dialogue spoken by the user.]
                 $direction
-                Continue naturally in character. Use *single stars* for actions or scene narration, 「Japanese quotation marks」 for spoken dialogue, and parentheses for fictional in-character private thoughts.
+                Continue naturally in character. Use *single stars* for actions or scene narration, straight quotation marks ("dialogue") for spoken dialogue, and parentheses for fictional in-character private thoughts.
             """.trimIndent()
 
             chatError = null
@@ -1232,9 +1269,55 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
+            val explicitlyRequested = explicitlyRequestedGroupMembers(content, members, session.messages)
+            var routingWarning: String? = null
+            val turnSpeakers = when {
+                explicitlyRequested != null -> explicitlyRequested
+                session.groupResponseMode == GroupResponseMode.Auto -> {
+                    val directorKey = session.directorApiKey.trim()
+                    if (directorKey.isBlank()) {
+                        apiKeyDialogTarget = ApiKeyDialogTarget.DirectorKey
+                        apiKeyDraft = ""
+                        apiKeyDialogVisible = true
+                        chatError = "Add the Group Director API key to use Auto routing."
+                        return@launch
+                    }
+                    val directorResult = geminiChatService.routeGroupSpeakers(
+                        apiKey = directorKey,
+                        routingPrompt = groupDirectorPrompt(
+                            userMessage = content,
+                            members = members,
+                            history = session.messages
+                        ),
+                        allowedAliases = members.indices.map { index -> "M${index + 1}" }
+                    )
+                    directorResult.fold(
+                        onSuccess = { reply ->
+                            recordUsage(reply.toChatReply())
+                            val selected = membersForDirectorAliases(reply.speakerAliases, members)
+                            if (selected.isNotEmpty()) {
+                                selected
+                            } else {
+                                routingWarning = "Director returned no valid speakers; one member was selected by rotation."
+                                fairGroupSpeakers(members, session.messages, 1)
+                            }
+                        },
+                        onFailure = { throwable ->
+                            routingWarning = "Director unavailable; rotation used: ${friendlySendError(throwable)}"
+                            fairGroupSpeakers(members, session.messages, 1)
+                        }
+                    )
+                }
+                else -> fairGroupSpeakers(
+                    members = members,
+                    history = session.messages,
+                    count = session.groupResponseMode.fixedCount ?: 1
+                )
+            }
+
             var missingKeyMember: GroupMember? = null
-            for (member in members) {
-                if (apiKeyManager.keyForProvider(member.persona.vendor.id).isNullOrBlank()) {
+            for (member in turnSpeakers) {
+                if (resolvedApiKeyOrNull(member).isNullOrBlank()) {
                     missingKeyMember = member
                     break
                 }
@@ -1248,7 +1331,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            val unsupportedImageMember = members.firstOrNull { member ->
+            val unsupportedImageMember = turnSpeakers.firstOrNull { member ->
                 imageUris.isNotEmpty() && !geminiChatService.supportsImageInput(member.persona.vendor, member.persona.model)
             }
             if (unsupportedImageMember != null) {
@@ -1264,7 +1347,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
             draft = ""
             attachedImageUris = emptyList()
-            chatError = null
+            chatError = routingWarning
             sendingSessionId = sessionId
             val userMessage = ChatMessage(role = "user", content = content, imageUris = imageUris)
             appendMessage(
@@ -1280,20 +1363,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 content = content
             )
 
-            runCatching {
-                val responseTurns = session.responseRounds.coerceIn(1, 3)
-                val taggedSpeakers = taggedMembersForMessage(content, members)
-                val turnSpeakers = if (taggedSpeakers.isNotEmpty()) {
-                    taggedSpeakers.take(responseTurns)
-                } else {
-                    groupTurnSpeakers(
-                        members = members,
-                        turns = responseTurns
-                    )
-                }
-                turnSpeakers.forEachIndexed { turnIndex, member ->
-                        val memberApiKey = apiKeyManager.keyForProvider(member.persona.vendor.id)
-                            ?: error("Missing ${member.persona.vendor.label} key.")
+            val responderFailures = mutableListOf<String>()
+            var successfulResponses = 0
+            turnSpeakers.forEachIndexed { turnIndex, member ->
+                runCatching {
+                        val memberApiKey = resolvedApiKey(member)
                         val currentHistory = activeSession.messages
                         val memberInput = groupMemberInput(
                             originalUserMessage = toolAugmentedContent,
@@ -1311,11 +1385,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                     id = member.id,
                                     persona = member.persona
                                 ),
-                                history = currentHistory.toEntities(sessionId),
+                                history = currentHistory.toEntitiesForGroupMember(
+                                    chatId = sessionId,
+                                    targetMemberId = member.id,
+                                    groupMembers = members
+                                ),
                                 userInput = memberInput,
                                 vendor = member.persona.vendor,
                                 safetyLevel = member.persona.safetyLevel,
-                                images = if (turnIndex == 0) loadedImages else emptyList(),
+                                images = loadedImages,
                                 webSearchEnabled = false,
                                 masterPrompt = masterSystemPrompt
                             )
@@ -1327,9 +1405,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             rawText = reply.text,
                             speaker = member
                         )
+                        successfulResponses++
+                }.onFailure { throwable ->
+                    responderFailures += "${member.persona.displayName}: ${friendlySendError(throwable)}"
                 }
-            }.onFailure { throwable ->
-                handleSendFailure(throwable, userMessage.id)
+            }
+            if (successfulResponses == 0 && responderFailures.isNotEmpty()) {
+                updateMessageDeliveryStatus(userMessage.id, MessageDeliveryStatus.Failed)
+            }
+            chatError = when {
+                responderFailures.isNotEmpty() -> responderFailures.joinToString("\n").take(480)
+                routingWarning != null -> routingWarning
+                else -> null
             }
             sendingSessionId = null
         }
@@ -2256,7 +2343,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             persona = firstMember.persona,
             members = listOf(firstMember),
             activeMemberId = firstMember.id,
-            responseRounds = 1,
+            groupResponseMode = GroupResponseMode.Auto,
             projectId = projectId,
             preview = "No messages yet"
         )
@@ -2301,7 +2388,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             persona = firstMember.persona,
             members = listOf(firstMember),
             activeMemberId = firstMember.id,
-            responseRounds = 1,
+            groupResponseMode = GroupResponseMode.Auto,
             storyLore = storyLore.take(MAX_STORY_LORE_CHARS),
             preview = greeting.ifBlank { "No messages yet" },
             headerAvatarUri = avatarUri,
@@ -2421,25 +2508,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun duplicateSessionSettings(sessionId: String) {
         val source = sessions.firstOrNull { it.id == sessionId } ?: return
-        val memberIdMap = source.normalizedMembers().associate { member -> member.id to UUID.randomUUID().toString() }
-        val copiedMembers = source.normalizedMembers().map { member ->
-            member.copy(id = memberIdMap.getValue(member.id))
-        }
-        val copiedActiveId = memberIdMap[source.activeMemberId] ?: copiedMembers.first().id
-        val copiedPersona = copiedMembers.firstOrNull { it.id == copiedActiveId }?.persona
-            ?: copiedMembers.first().persona
-        val copiedSession = source.copy(
-            id = UUID.randomUUID().toString(),
-            persona = copiedPersona,
-            members = copiedMembers,
-            activeMemberId = copiedActiveId,
-            archivedContext = "",
-            archivedMessageIds = emptySet(),
-            preview = "No messages yet",
+        val copiedSession = source.localClone(includeMessages = false).copy(
             updatedAt = currentTime(),
             isFavorite = false,
-            pinnedAtMillis = null,
-            messages = emptyList()
+            pinnedAtMillis = null
         )
         sessions.add(0, copiedSession)
         activeSessionId = copiedSession.id
@@ -2455,7 +2527,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             source.normalizedMembers()
                 .joinToString(" + ") { member -> member.persona.displayName.ifBlank { "New Persona" } }
         }
-        val clone = source.freshImportCopy().copy(
+        val clone = source.localClone(includeMessages = true).copy(
             title = sourceTitle.let { title ->
                 if (title.endsWith(" copy", ignoreCase = true)) title else "$title copy"
             },
@@ -3134,6 +3206,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             headerAvatarScale = avatarScale,
             headerAvatarOffsetX = avatarOffsetX,
             headerAvatarOffsetY = avatarOffsetY,
+            headerAvatarRotation = avatarRotation,
+            headerAvatarTransformNormalized = avatarTransformNormalized,
             storyLore = storyLore,
             background = importedBackground,
             preview = "Imported configuration"
@@ -3197,6 +3271,38 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         apiKeyDialogTarget = ApiKeyDialogTarget.Provider
         apiKeyDraft = ""
         apiKeyDialogVisible = true
+    }
+
+    fun openGroupMemberApiKeyDialog() {
+        openGroupMemberApiKeyDialogFor(activeGroupMember.id)
+    }
+
+    fun openGroupMemberApiKeyDialogFor(memberId: String) {
+        val member = groupMembers.firstOrNull { it.id == memberId } ?: return
+        selectGroupMember(member.id)
+        apiKeyDialogTarget = ApiKeyDialogTarget.GroupMemberKey(member.id)
+        apiKeyDraft = ""
+        apiKeyDialogVisible = true
+    }
+
+    fun clearGroupMemberApiKey() {
+        clearGroupMemberApiKeyFor(activeGroupMember.id)
+    }
+
+    fun clearGroupMemberApiKeyFor(memberId: String) {
+        updateGroupMemberApiKey(memberId, "")
+        chatError = null
+    }
+
+    fun openDirectorApiKeyDialog() {
+        apiKeyDialogTarget = ApiKeyDialogTarget.DirectorKey
+        apiKeyDraft = ""
+        apiKeyDialogVisible = true
+    }
+
+    fun clearDirectorApiKey() {
+        updateActiveSession { session -> session.copy(directorApiKey = "") }
+        chatError = null
     }
 
     fun openTavilyApiKeyDialog() {
@@ -3266,6 +3372,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 ApiKeyDialogTarget.ElevenLabsKey -> apiKeyManager.replaceElevenLabsKey(apiKeyDraft)
                 ApiKeyDialogTarget.ElevenLabsVoiceId -> apiKeyManager.replaceElevenLabsVoiceId(apiKeyDraft)
                 ApiKeyDialogTarget.ElevenLabsModelId -> apiKeyManager.replaceElevenLabsModelId(apiKeyDraft)
+                ApiKeyDialogTarget.DirectorKey -> {
+                    updateActiveSession { session -> session.copy(directorApiKey = apiKeyDraft.trim()) }
+                }
+                is ApiKeyDialogTarget.GroupMemberKey -> {
+                    val target = apiKeyDialogTarget as ApiKeyDialogTarget.GroupMemberKey
+                    updateGroupMemberApiKey(target.memberId, apiKeyDraft)
+                }
             }
             apiKeyDialogVisible = false
             apiKeyDraft = ""
@@ -3434,9 +3547,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateResponseRounds(value: Int) {
+    fun updateGroupResponseMode(value: GroupResponseMode) {
         updateActiveSession { session ->
-            session.copy(responseRounds = value.coerceIn(1, 3))
+            session.copy(groupResponseMode = value)
         }
     }
 
@@ -3772,18 +3885,29 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 headerAvatarScale = 1f,
                 headerAvatarOffsetX = 0f,
                 headerAvatarOffsetY = 0f,
+                headerAvatarRotation = 0f,
+                headerAvatarTransformNormalized = true,
                 updatedAt = currentTime()
             )
         }
     }
 
-    fun transformSessionHeaderAvatar(zoomChange: Float, panX: Float, panY: Float) {
+    fun setSessionHeaderAvatarCrop(
+        uri: Uri,
+        scale: Float,
+        offsetX: Float,
+        offsetY: Float,
+        rotation: Float
+    ) {
+        persistImagePermission(uri)
         updateActiveSession { session ->
-            val nextScale = (session.headerAvatarScale * zoomChange).coerceIn(1f, 4f)
             session.copy(
-                headerAvatarScale = nextScale,
-                headerAvatarOffsetX = (session.headerAvatarOffsetX + panX).coerceIn(-180f, 180f),
-                headerAvatarOffsetY = (session.headerAvatarOffsetY + panY).coerceIn(-180f, 180f),
+                headerAvatarUri = uri,
+                headerAvatarScale = scale.coerceIn(1f, 4f),
+                headerAvatarOffsetX = offsetX.coerceIn(-1.5f, 1.5f),
+                headerAvatarOffsetY = offsetY.coerceIn(-1.5f, 1.5f),
+                headerAvatarRotation = ((rotation % 360f) + 360f) % 360f,
+                headerAvatarTransformNormalized = true,
                 updatedAt = currentTime()
             )
         }
@@ -4003,6 +4127,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 activeMemberId = activeId
             )
         }
+    }
+
+    private fun updateGroupMemberApiKey(memberId: String, apiKey: String) {
+        updateActiveSession { session ->
+            val members = session.normalizedMembers()
+            val updatedMembers = members.map { member ->
+                if (member.id == memberId) member.copy(apiKey = apiKey.trim()) else member
+            }
+            session.copy(members = updatedMembers)
+        }
+    }
+
+    private suspend fun resolvedApiKeyOrNull(member: GroupMember): String? {
+        return member.apiKey.trim().ifBlank {
+            apiKeyManager.keyForProvider(member.persona.vendor.id).orEmpty()
+        }.takeIf { it.isNotBlank() }
+    }
+
+    private suspend fun resolvedApiKey(member: GroupMember): String {
+        return resolvedApiKeyOrNull(member)
+            ?: error("No API key for ${member.persona.vendor.label}.")
     }
 
     private fun updateActiveSession(transform: (ChatSession) -> ChatSession) {
@@ -4413,7 +4558,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         rawText: String,
         speaker: GroupMember? = null
     ) {
-        val speakerName = speaker?.persona?.displayName ?: session.persona.displayName
+        val declaredSpeaker = speaker?.let {
+            leadingGroupSpeaker(rawText, session.normalizedMembers())
+        }
+        val effectiveSpeaker = declaredSpeaker ?: speaker
+        val speakerName = effectiveSpeaker?.persona?.displayName ?: session.persona.displayName
         val cleanResponse = cleanModelResponseOrNull(rawText, speakerName)
         if (cleanResponse != null) {
             appendMessage(
@@ -4421,13 +4570,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 message = ChatMessage(
                     role = "model",
                     content = cleanResponse,
-                    speakerId = speaker?.id,
-                    speakerName = speaker?.persona?.displayName
+                    speakerId = effectiveSpeaker?.id,
+                    speakerName = effectiveSpeaker?.persona?.displayName
                 ),
-                preview = if (speaker == null) {
+                preview = if (effectiveSpeaker == null) {
                     cleanResponse.take(72)
                 } else {
-                    "${speaker.persona.displayName}: ${cleanResponse.take(56)}"
+                    "${effectiveSpeaker.persona.displayName}: ${cleanResponse.take(56)}"
                 }
             )
             return
@@ -4449,7 +4598,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             members.firstOrNull { it.id == requested.id }
         } ?: members.firstOrNull { it.id == refreshedSession.activeMemberId }
             ?: members.first()
-        val apiKey = apiKeyManager.keyForProvider(targetMember.persona.vendor.id)
+        val apiKey = resolvedApiKeyOrNull(targetMember)
         if (apiKey.isNullOrBlank()) {
             chatError = "Could not recover the empty response because the API key is missing."
             return
@@ -5258,52 +5407,106 @@ private fun String.isRecoverableLiveGoAway(): Boolean {
             )
 }
 
-private fun groupTurnSpeakers(
+internal fun fairGroupSpeakers(
     members: List<GroupMember>,
-    turns: Int
+    history: List<ChatMessage>,
+    count: Int
 ): List<GroupMember> {
-    val normalizedTurns = turns.coerceIn(1, 3)
-    if (members.size <= 1) return List(normalizedTurns) { members.first() }
-
-    val speakers = mutableListOf<GroupMember>()
-    var pool = members.shuffled().toMutableList()
-    repeat(normalizedTurns) {
-        if (pool.isEmpty()) {
-            pool = members.shuffled().toMutableList()
+    if (members.isEmpty()) return emptyList()
+    val memberOrder = members.withIndex().associate { it.value.id to it.index }
+    val lastSpokenAt = buildMap {
+        history.forEachIndexed { index, message ->
+            message.speakerId?.let { put(it, index) }
         }
-        val lastSpeaker = speakers.lastOrNull()
-        val nextIndex = if (pool.size > 1 && lastSpeaker != null) {
-            pool.indexOfFirst { it.id != lastSpeaker.id }.takeIf { it >= 0 } ?: 0
-        } else {
-            0
-        }
-        speakers += pool.removeAt(nextIndex)
     }
-    return speakers
+    return members.sortedWith(
+        compareBy<GroupMember> { lastSpokenAt[it.id] ?: -1 }
+            .thenBy { memberOrder[it.id] ?: Int.MAX_VALUE }
+    ).take(count.coerceIn(1, members.size))
 }
 
-private fun taggedMembersForMessage(
+internal fun explicitlyRequestedGroupMembers(
     message: String,
-    members: List<GroupMember>
-): List<GroupMember> {
-    fun containsMention(alias: String): Boolean {
-        if (alias.isBlank()) return false
+    members: List<GroupMember>,
+    history: List<ChatMessage>
+): List<GroupMember>? {
+    val explicitCallAll = Regex(
+        pattern = "(^|\\s)@(all|everyone)(?=\\s|$|[,:;.!?])",
+        option = RegexOption.IGNORE_CASE
+    ).containsMatchIn(message)
+    val naturalCallAll = listOf(
+        "all of you", "everyone here", "everybody here", "tất cả", "mọi người", "cả nhóm"
+    ).any { phrase -> message.contains(phrase, ignoreCase = true) }
+    if (explicitCallAll || naturalCallAll) {
+        return fairGroupSpeakers(members, history, members.size)
+    }
+
+    fun mentionIndex(alias: String): Int? {
+        if (alias.isBlank()) return null
         return Regex(
             pattern = "(^|\\s)@${Regex.escape(alias)}(?=\\s|$|[,:;.!?])",
             option = RegexOption.IGNORE_CASE
-        ).containsMatchIn(message)
+        ).find(message)?.range?.first
     }
 
-    val fullNameMatches = members.filter { member ->
-        val displayName = member.persona.displayName.trim()
-        displayName.isNotBlank() && containsMention(displayName)
+    val matches = members.mapNotNull { member ->
+        val fullName = member.persona.displayName.trim()
+        val fullIndex = mentionIndex(fullName)
+        val firstIndex = mentionIndex(fullName.substringBefore(' '))
+        listOfNotNull(fullIndex, firstIndex).minOrNull()?.let { index -> member to index }
     }
-    if (fullNameMatches.isNotEmpty()) return fullNameMatches
+    return matches.sortedBy { it.second }.map { it.first }.takeIf { it.isNotEmpty() }
+}
 
-    return members.filter { member ->
-        val firstName = member.persona.displayName.trim().substringBefore(' ')
-        containsMention(firstName)
-    }
+internal fun membersForDirectorAliases(
+    aliases: List<String>,
+    members: List<GroupMember>
+): List<GroupMember> {
+    val aliasMap = members.mapIndexed { index, member -> "M${index + 1}" to member }.toMap()
+    return aliases.mapNotNull { alias -> aliasMap[alias.trim().uppercase(Locale.US)] }
+        .distinctBy { it.id }
+        .take(members.size)
+}
+
+private fun groupDirectorPrompt(
+    userMessage: String,
+    members: List<GroupMember>,
+    history: List<ChatMessage>
+): String {
+    val memberProfiles = members.mapIndexed { index, member ->
+        val persona = member.persona
+        val instructions = when (persona.instructionMode) {
+            InstructionMode.Beginner -> listOf(persona.beginnerRole, persona.beginnerStyle, persona.beginnerLimits)
+            InstructionMode.Advanced -> listOf(persona.instructionPrompt)
+        }.filter { it.isNotBlank() }.joinToString(" | ").take(1_600)
+        "M${index + 1}: name=${persona.displayName}; tagline=${persona.tagline}; " +
+            "traits=${persona.traits.joinToString(", ")}; role=$instructions"
+    }.joinToString("\n")
+    val recentConversation = history.takeLast(12).joinToString("\n") { message ->
+        val speaker = if (message.role == "user") "User" else message.speakerName ?: "AI"
+        "$speaker: ${message.content.take(900)}"
+    }.takeLast(8_000)
+    return """
+        You are the hidden Director of a multi-AI room. Select which members should answer the newest user message.
+        Return JSON only, matching the schema. Use only the aliases M1 through M${members.size}.
+
+        Selection rules:
+        - Select at least 1 and at most ${members.size} distinct members.
+        - Prefer 1 member for casual remarks, simple questions, or a clearly relevant specialist.
+        - Select 2 or 3 when distinct viewpoints, collaboration, disagreement, or multiple roles add value.
+        - Select every member only when the request clearly benefits from the whole room.
+        - Order aliases in the sequence they should reply. Later responders will see earlier replies.
+        - Base relevance on persona roles and recent conversation. Do not select members merely to fill space.
+
+        Members:
+        $memberProfiles
+
+        Recent conversation:
+        ${recentConversation.ifBlank { "(none)" }}
+
+        New user message:
+        $userMessage
+    """.trimIndent()
 }
 
 private const val MAX_GLOBAL_MEMORY_CHARS = 64_000
@@ -5587,6 +5790,22 @@ private fun cleanModelResponseOrNull(raw: String, speakerName: String): String? 
         .takeIf { it.isNotBlank() && !it.equals("(empty response)", ignoreCase = true) }
 }
 
+internal fun leadingGroupSpeaker(raw: String, members: List<GroupMember>): GroupMember? {
+    val text = stripToolJsonNoise(raw.trim()).trimStart()
+    return members
+        .sortedByDescending { it.persona.displayName.trim().length }
+        .firstOrNull { member ->
+            val name = member.persona.displayName.trim()
+            if (name.isBlank()) return@firstOrNull false
+            val escapedName = Regex.escape(name)
+            listOf(
+                Regex("^\\s*\\*\\*\\s*$escapedName\\s*\\*\\*\\s*[:：|]", RegexOption.IGNORE_CASE),
+                Regex("^\\s*\\[$escapedName]\\s*[:：|]?", RegexOption.IGNORE_CASE),
+                Regex("^\\s*$escapedName\\s*[:：|]", RegexOption.IGNORE_CASE)
+            ).any { pattern -> pattern.containsMatchIn(text) }
+        }
+}
+
 private fun cleanModelResponse(raw: String, speakerName: String): String {
     val fallback = "(empty response)"
     val text = stripToolJsonNoise(raw.trim()).ifBlank { fallback }
@@ -5650,7 +5869,8 @@ private fun groupMemberInput(
         Group members: $names.
         Current AI turn: $turn of $totalTurns.
         Reply only as ${member.persona.displayName}. Do not speak for the other AI members or for the user.
-        Do not start with "${member.persona.displayName}:" or any speaker label; the app UI already shows your name.
+        Other group members are context-only. Never continue their dialogue or write a line on their behalf.
+        Do not start with any member name or speaker label; the app UI already shows your name.
         The visible message history includes prior AI speaker labels. Use that history as context.
         If another AI already replied, respond to their point, improve it, challenge it, or synthesize it instead of repeating it.
         ${if (isFinalTurn) "This is the final AI turn before the user speaks again. Give the clearest final answer or decision." else "Leave room for the next AI to add, debate, or refine."}
@@ -5662,7 +5882,7 @@ private fun groupMemberInput(
 }
 
 private suspend fun exportSessionJson(context: android.content.Context, session: ChatSession): String {
-    val sessionJson = session.toJson()
+    val sessionJson = session.toJson(includeApiKeys = false)
     
     val avatarUri = session.persona.avatarUri ?: session.headerAvatarUri
     if (avatarUri != null) {
@@ -5766,10 +5986,63 @@ private fun JSONObject.toHubCharacter(): HubCharacter {
     )
 }
 
+private fun GroupMember.localClone(newId: String): GroupMember {
+    return copy(
+        id = newId,
+        apiKey = apiKey
+    )
+}
+
+internal fun ChatSession.localClone(includeMessages: Boolean): ChatSession {
+    val memberIdMap = normalizedMembers().associate { member -> member.id to UUID.randomUUID().toString() }
+    val clonedMembers = normalizedMembers().map { member ->
+        member.localClone(memberIdMap.getValue(member.id))
+    }
+    val clonedActiveId = memberIdMap[activeMemberId] ?: clonedMembers.first().id
+    val clonedPersona = clonedMembers.firstOrNull { it.id == clonedActiveId }?.persona
+        ?: clonedMembers.first().persona
+    val messageIdMap = if (includeMessages) {
+        messages.associate { message -> message.id to UUID.randomUUID().toString() }
+    } else {
+        emptyMap()
+    }
+    val clonedMessages = if (includeMessages) {
+        messages.map { message ->
+            message.copy(
+                id = messageIdMap.getValue(message.id),
+                speakerId = message.speakerId?.let { memberIdMap[it] }
+            )
+        }
+    } else {
+        emptyList()
+    }
+    return copy(
+        id = UUID.randomUUID().toString(),
+        persona = clonedPersona,
+        members = clonedMembers,
+        activeMemberId = clonedActiveId,
+        directorApiKey = directorApiKey,
+        archivedContext = if (includeMessages) archivedContext else "",
+        archivedMessageIds = if (includeMessages) {
+            archivedMessageIds.mapNotNullTo(linkedSetOf()) { messageIdMap[it] }
+        } else {
+            emptySet()
+        },
+        preview = if (includeMessages) previewForRestored(clonedMessages) else "No messages yet",
+        updatedAt = currentTime(),
+        isFavorite = false,
+        pinnedAtMillis = null,
+        messages = clonedMessages
+    )
+}
+
 private fun ChatSession.freshImportCopy(): ChatSession {
     val memberIdMap = normalizedMembers().associate { member -> member.id to UUID.randomUUID().toString() }
     val importedMembers = normalizedMembers().map { member ->
-        member.copy(id = memberIdMap.getValue(member.id))
+        member.copy(
+            id = memberIdMap.getValue(member.id),
+            apiKey = ""
+        )
     }
     val importedActiveId = memberIdMap[activeMemberId] ?: importedMembers.first().id
     val importedPersona = importedMembers.firstOrNull { it.id == importedActiveId }?.persona
@@ -5788,6 +6061,7 @@ private fun ChatSession.freshImportCopy(): ChatSession {
         persona = importedPersona,
         members = importedMembers,
         activeMemberId = importedActiveId,
+        directorApiKey = "",
         archivedMessageIds = archivedMessageIds.mapNotNullTo(linkedSetOf()) { messageIdMap[it] },
         preview = previewForRestored(importedMessages),
         updatedAt = currentTime(),
@@ -5848,7 +6122,7 @@ private fun decodeProjectState(rawState: String): List<ProjectUiState> {
     }.getOrDefault(emptyList())
 }
 
-private fun ChatSession.toJson(): JSONObject {
+private fun ChatSession.toJson(includeApiKeys: Boolean = true): JSONObject {
     return JSONObject()
         .put("id", id)
         .put("title", title)
@@ -5856,9 +6130,12 @@ private fun ChatSession.toJson(): JSONObject {
         .put("headerAvatarScale", headerAvatarScale.toDouble())
         .put("headerAvatarOffsetX", headerAvatarOffsetX.toDouble())
         .put("headerAvatarOffsetY", headerAvatarOffsetY.toDouble())
+        .put("headerAvatarRotation", headerAvatarRotation.toDouble())
+        .put("headerAvatarTransformNormalized", headerAvatarTransformNormalized)
         .put("persona", persona.toJson())
         .put("activeMemberId", activeMemberId)
-        .put("responseRounds", responseRounds)
+        .put("groupResponseMode", groupResponseMode.name)
+        .put("directorApiKey", if (includeApiKeys) directorApiKey else "")
         .put("memoryEnabled", memoryEnabled)
         .put("storyLore", storyLore)
         .put("archivedContext", archivedContext)
@@ -5872,7 +6149,7 @@ private fun ChatSession.toJson(): JSONObject {
         .put(
             "members",
             JSONArray().apply {
-                normalizedMembers().forEach { member -> put(member.toJson()) }
+                normalizedMembers().forEach { member -> put(member.toJson(includeApiKey = includeApiKeys)) }
             }
         )
         .put("background", background.toJson())
@@ -5939,10 +6216,16 @@ private fun JSONObject.toChatSession(): ChatSession {
         headerAvatarScale = optDouble("headerAvatarScale", 1.0).toFloat(),
         headerAvatarOffsetX = optDouble("headerAvatarOffsetX", 0.0).toFloat(),
         headerAvatarOffsetY = optDouble("headerAvatarOffsetY", 0.0).toFloat(),
+        headerAvatarRotation = optDouble("headerAvatarRotation", 0.0).toFloat(),
+        headerAvatarTransformNormalized = optBoolean("headerAvatarTransformNormalized", false),
         persona = activePersona,
         members = restoredMembers,
         activeMemberId = activeMemberId,
-        responseRounds = optInt("responseRounds", 1).coerceIn(1, 3),
+        groupResponseMode = restoredGroupResponseMode(
+            storedMode = optString("groupResponseMode"),
+            legacyRounds = optInt("responseRounds", 1)
+        ),
+        directorApiKey = optString("directorApiKey", ""),
         memoryEnabled = if (has("memoryEnabled")) optBoolean("memoryEnabled", true) else true,
         storyLore = optString("storyLore").ifBlank { legacyStoryLore }.take(MAX_STORY_LORE_CHARS),
         archivedContext = optString("archivedContext"),
@@ -5961,6 +6244,15 @@ private fun JSONObject.toChatSession(): ChatSession {
         },
         messages = restoredMessages
     )
+}
+
+internal fun restoredGroupResponseMode(storedMode: String, legacyRounds: Int): GroupResponseMode {
+    return GroupResponseMode.entries.firstOrNull { it.name == storedMode }
+        ?: when (legacyRounds.coerceIn(1, 3)) {
+            2 -> GroupResponseMode.Two
+            3 -> GroupResponseMode.Three
+            else -> GroupResponseMode.One
+        }
 }
 
 private fun ProjectUiState.toJson(): JSONObject {
@@ -5982,16 +6274,18 @@ private fun JSONObject.toProjectUiState(): ProjectUiState {
     )
 }
 
-private fun GroupMember.toJson(): JSONObject {
+private fun GroupMember.toJson(includeApiKey: Boolean = true): JSONObject {
     return JSONObject()
         .put("id", id)
         .put("persona", persona.toJson())
+        .put("apiKey", if (includeApiKey) apiKey else "")
 }
 
 private fun JSONObject.toGroupMember(): GroupMember {
     return GroupMember(
         id = optString("id").ifBlank { UUID.randomUUID().toString() },
-        persona = optJSONObject("persona")?.toPersonaUiState() ?: PersonaUiState()
+        persona = optJSONObject("persona")?.toPersonaUiState() ?: PersonaUiState(),
+        apiKey = optString("apiKey", "")
     )
 }
 
@@ -6278,7 +6572,7 @@ private fun PersonaUiState.toEntity(
         promptSections += """
             Follow this roleplay presentation format consistently:
             - Put physical actions and scene narration inside single asterisks: *She walks to the window.*
-            - Put spoken dialogue inside Japanese quotation marks: 「We should leave before sunset.」
+            - Put spoken dialogue inside straight quotation marks: "We should leave before sunset."
             - Put fictional in-character private thoughts inside parentheses: (Why does this feel familiar?)
             - Use double asterisks only for intentional bold emphasis: **Do not touch that.**
             Parenthesized thoughts are fictional character presentation, never hidden model reasoning. Never reveal chain-of-thought.
@@ -6329,19 +6623,45 @@ private fun PersonaUiState.effectiveInstructionPrompt(): String {
 }
 
 private fun List<ChatMessage>.toEntities(chatId: String): List<MessageEntity> {
+    return toEntitiesForGroupMember(chatId = chatId, targetMemberId = null)
+}
+
+internal fun List<ChatMessage>.toEntitiesForGroupMember(
+    chatId: String,
+    targetMemberId: String?,
+    groupMembers: List<GroupMember> = emptyList()
+): List<MessageEntity> {
     return filterNot { message ->
         message.isImageLoading || (message.remoteImageUrl != null && message.content.isBlank())
     }.map { message ->
         val historyContent = stripToolJsonNoise(message.content).ifBlank { message.content }
+        val declaredSpeaker = if (message.role == "model") {
+            leadingGroupSpeaker(historyContent, groupMembers)
+        } else {
+            null
+        }
+        val effectiveSpeakerId = declaredSpeaker?.id ?: message.speakerId
+        val isOtherGroupMember = message.role == "model" &&
+            targetMemberId != null &&
+            effectiveSpeakerId != null &&
+            effectiveSpeakerId != targetMemberId
+        val content = when {
+            isOtherGroupMember -> {
+                val speaker = declaredSpeaker?.persona?.displayName
+                    ?: message.speakerName?.takeIf { it.isNotBlank() }
+                    ?: "another AI"
+                "[Message from $speaker]\n${cleanModelResponse(historyContent, speaker)}"
+            }
+            targetMemberId != null && message.role == "model" -> historyContent
+            message.role == "model" && !message.speakerName.isNullOrBlank() ->
+                "${message.speakerName}: $historyContent"
+            else -> historyContent
+        }
         MessageEntity(
             id = message.id,
             chatId = chatId,
-            role = message.role,
-            content = if (message.role == "model" && !message.speakerName.isNullOrBlank()) {
-                "${message.speakerName}: $historyContent"
-            } else {
-                historyContent
-            },
+            role = if (isOtherGroupMember) "user" else message.role,
+            content = content,
             timestamp = System.currentTimeMillis()
         )
     }

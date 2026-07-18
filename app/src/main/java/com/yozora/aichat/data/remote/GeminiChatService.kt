@@ -2,13 +2,9 @@ package com.yozora.aichat.data.remote
 
 import android.graphics.Bitmap
 import android.util.Base64
-import com.google.ai.client.generativeai.GenerativeModel
 import com.google.ai.client.generativeai.type.BlockThreshold
-import com.google.ai.client.generativeai.type.FunctionType
 import com.google.ai.client.generativeai.type.HarmCategory
 import com.google.ai.client.generativeai.type.SafetySetting
-import com.google.ai.client.generativeai.type.Schema
-import com.google.ai.client.generativeai.type.generationConfig
 import com.yozora.aichat.data.SkillRepository
 import com.yozora.aichat.data.db.MessageEntity
 import com.yozora.aichat.data.db.PersonaEntity
@@ -31,6 +27,20 @@ data class GeminiChatReply(
     val responseTokenCount: Int,
     val totalTokenCount: Int
 )
+
+data class GeminiDirectorReply(
+    val speakerAliases: List<String>,
+    val promptTokenCount: Int,
+    val responseTokenCount: Int,
+    val totalTokenCount: Int
+) {
+    fun toChatReply(): GeminiChatReply = GeminiChatReply(
+        text = "",
+        promptTokenCount = promptTokenCount,
+        responseTokenCount = responseTokenCount,
+        totalTokenCount = totalTokenCount
+    )
+}
 
 data class GeminiToolCall(
     val name: String,
@@ -65,7 +75,9 @@ private const val FALLBACK_MASTER_PROMPT = """
 You are a customizable AI companion. Follow the persona instruction prompt for the active session, keep replies immersive and useful, and ask for clarification when the user request is unclear.
 """
 
-private const val SUMMARIZER_MODEL = "gemini-3.1-flash-lite"
+private const val FLASH_LITE_MODEL = "gemini-3.1-flash-lite"
+private const val FLASH_LITE_THINKING_BUDGET = 8192
+private const val SUMMARIZER_MODEL = FLASH_LITE_MODEL
 
 private const val SUMMARIZER_SYSTEM_PROMPT = """
 You are a conversation archiver. Compress the following chat log into a dense, structured summary under 250 words. Format it as:
@@ -229,15 +241,6 @@ class GeminiChatService(
         userRequest: String,
         presetHint: String = ""
     ): Result<String> = runCatching {
-        val model = GenerativeModel(
-            modelName = "gemini-3.1-flash-lite",
-            apiKey = apiKey,
-            generationConfig = generationConfig {
-                temperature = 0.1f
-                maxOutputTokens = 32
-            },
-            safetySettings = safetySettings(SafetyLevel.None)
-        )
         val prompt = """
             Convert this image request into Rule34/Danbooru search tags.
             Preset guidance: $presetHint
@@ -252,8 +255,13 @@ class GeminiChatService(
             - Example output: maid black_hair large_breasts 1girl
             Request: "$userRequest"
         """.trimIndent()
-        val response = model.generateContent(prompt)
-        parseRule34Tags(response.text.orEmpty()).ifBlank {
+        val responseText = generateFlashLiteUtilityContent(
+            apiKey = apiKey,
+            prompt = prompt,
+            temperature = 0.1,
+            maxOutputTokens = 32
+        )
+        parseRule34Tags(responseText).ifBlank {
             fallbackRule34Tags(userRequest)
         }
     }
@@ -262,45 +270,20 @@ class GeminiChatService(
         apiKey: String,
         userPrompt: String
     ): Result<PersonaAutoFillResult> = runCatching {
-        val responseSchema = Schema(
-            type = FunctionType.OBJECT,
-            name = "",
-            description = "",
-            properties = mapOf(
-                "storyLore" to Schema(
-                    type = FunctionType.STRING,
-                    name = "storyLore",
-                    description = "The background lore, world rules, locations, factions, and setting context shared by all characters."
-                ),
-                "beginnerRole" to Schema(
-                    type = FunctionType.STRING,
-                    name = "beginnerRole",
-                    description = "Who this persona is, what they know, and how they relate to the user."
-                ),
-                "beginnerStyle" to Schema(
-                    type = FunctionType.STRING,
-                    name = "beginnerStyle",
-                    description = "Tone, message length, speaking quirks, and roleplay/conversation texture."
-                ),
-                "beginnerLimits" to Schema(
-                    type = FunctionType.STRING,
-                    name = "beginnerLimits",
-                    description = "Boundaries, canon rules, things to avoid, or must-follow details."
-                )
-            ),
-            required = listOf("storyLore", "beginnerRole", "beginnerStyle", "beginnerLimits")
-        )
-
-        val model = GenerativeModel(
-            modelName = "gemini-3.1-flash-lite",
-            apiKey = apiKey,
-            generationConfig = generationConfig {
-                temperature = 0.4f
-                responseMimeType = "application/json"
-                this.responseSchema = responseSchema
-            },
-            safetySettings = safetySettings(SafetyLevel.None)
-        )
+        val responseSchema = JSONObject()
+            .put("type", "OBJECT")
+            .put(
+                "properties",
+                JSONObject()
+                    .put("storyLore", JSONObject().put("type", "STRING"))
+                    .put("beginnerRole", JSONObject().put("type", "STRING"))
+                    .put("beginnerStyle", JSONObject().put("type", "STRING"))
+                    .put("beginnerLimits", JSONObject().put("type", "STRING"))
+            )
+            .put(
+                "required",
+                JSONArray(listOf("storyLore", "beginnerRole", "beginnerStyle", "beginnerLimits"))
+            )
 
         val prompt = """
             Analyze the following prompt and generate structured data to create a roleplay persona.
@@ -309,13 +292,17 @@ class GeminiChatService(
             User Prompt: "$userPrompt"
         """.trimIndent()
 
-        val response = withContext(Dispatchers.IO) {
-            model.generateContent(prompt)
-        }
+        val responseText = generateFlashLiteUtilityContent(
+            apiKey = apiKey,
+            prompt = prompt,
+            temperature = 0.4,
+            responseMimeType = "application/json",
+            responseSchema = responseSchema
+        )
 
         // The model may wrap JSON in ``` fences or add stray text; extract the
         // first {...} block before parsing so a stray character never breaks it.
-        val rawText = response.text.orEmpty().trim()
+        val rawText = responseText.trim()
         val jsonText = extractFirstJsonObject(rawText)
             ?: throw Exception("Empty or invalid response from Gemini")
 
@@ -358,15 +345,6 @@ class GeminiChatService(
         apiKey: String,
         cleanedText: String
     ): Result<String> = runCatching {
-        val model = GenerativeModel(
-            modelName = "gemini-3.1-flash-lite",
-            apiKey = apiKey,
-            generationConfig = generationConfig {
-                temperature = 0.2f
-                maxOutputTokens = 2048
-            },
-            safetySettings = safetySettings(SafetyLevel.None)
-        )
         val prompt = """
             Convert the following roleplay dialogue into natural spoken Japanese for text-to-speech.
 
@@ -381,7 +359,13 @@ class GeminiChatService(
             Text:
             $cleanedText
         """.trimIndent()
-        cleanSpeechPreparation(model.generateContent(prompt).text.orEmpty())
+        val responseText = generateFlashLiteUtilityContent(
+            apiKey = apiKey,
+            prompt = prompt,
+            temperature = 0.2,
+            maxOutputTokens = 2048
+        )
+        cleanSpeechPreparation(responseText)
             .ifBlank { cleanedText.trim() }
     }
 
@@ -413,6 +397,7 @@ class GeminiChatService(
                     JSONObject()
                         .put("temperature", 0.2)
                         .put("maxOutputTokens", 1024)
+                        .put("thinkingConfig", JSONObject().put("thinkingBudget", FLASH_LITE_THINKING_BUDGET))
                 )
                 .put("safetySettings", geminiRestSafetySettings(SafetyLevel.None))
 
@@ -431,6 +416,109 @@ class GeminiChatService(
                 totalTokenCount = usage?.optInt("totalTokenCount") ?: 0
             )
         }
+    }
+
+    suspend fun routeGroupSpeakers(
+        apiKey: String,
+        routingPrompt: String,
+        allowedAliases: List<String>
+    ): Result<GeminiDirectorReply> = runCatching {
+        withContext(Dispatchers.IO) {
+            val primary = runCatching {
+                routeGroupSpeakersWithModel(
+                    apiKey = apiKey,
+                    routingPrompt = routingPrompt,
+                    allowedAliases = allowedAliases,
+                    model = FLASH_LITE_MODEL,
+                    thinkingConfig = JSONObject().put("thinkingLevel", "minimal")
+                )
+            }
+            primary.getOrElse { primaryError ->
+                runCatching {
+                    routeGroupSpeakersWithModel(
+                        apiKey = apiKey,
+                        routingPrompt = routingPrompt,
+                        allowedAliases = allowedAliases,
+                        model = "gemini-2.5-flash-lite",
+                        thinkingConfig = JSONObject().put("thinkingBudget", 0)
+                    )
+                }.getOrElse { fallbackError ->
+                    error(
+                        "Director request failed. Primary: ${primaryError.message.orEmpty().take(180)}; " +
+                            "fallback: ${fallbackError.message.orEmpty().take(180)}"
+                    )
+                }
+            }
+        }
+    }
+
+    private fun routeGroupSpeakersWithModel(
+        apiKey: String,
+        routingPrompt: String,
+        allowedAliases: List<String>,
+        model: String,
+        thinkingConfig: JSONObject
+    ): GeminiDirectorReply {
+        val allowedAliasJson = JSONArray().apply { allowedAliases.forEach { alias -> put(alias) } }
+        val responseSchema = JSONObject()
+            .put("type", "OBJECT")
+            .put(
+                "properties",
+                JSONObject().put(
+                    "speakerIds",
+                    JSONObject()
+                        .put("type", "ARRAY")
+                        .put(
+                            "items",
+                            JSONObject()
+                                .put("type", "STRING")
+                                .put("enum", allowedAliasJson)
+                        )
+                )
+            )
+            .put("required", JSONArray().put("speakerIds"))
+        val body = JSONObject()
+            .put(
+                "contents",
+                JSONArray().put(
+                    JSONObject()
+                        .put("role", "user")
+                        .put("parts", JSONArray().put(JSONObject().put("text", routingPrompt)))
+                )
+            )
+            .put(
+                "generationConfig",
+                JSONObject()
+                    .put("temperature", 0.0)
+                    .put("maxOutputTokens", 256)
+                    .put("responseMimeType", "application/json")
+                    .put("responseSchema", responseSchema)
+                    .put("thinkingConfig", thinkingConfig)
+            )
+            .put("safetySettings", geminiRestSafetySettings(SafetyLevel.None))
+        val json = postJson(
+            url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent",
+            headers = mapOf("x-goog-api-key" to apiKey),
+            body = body
+        )
+        val candidate = json.optJSONArray("candidates")?.optJSONObject(0)
+            ?: error("No Director response candidate returned by $model.")
+        val text = extractGeminiRestText(candidate).trim()
+        if (text.isBlank()) error("Director returned an empty response from $model.")
+        val response = JSONObject(text)
+        val aliasesJson = response.optJSONArray("speakerIds") ?: JSONArray()
+        val aliases = buildList {
+            for (index in 0 until aliasesJson.length()) {
+                aliasesJson.optString(index).trim().takeIf { it.isNotBlank() }?.let(::add)
+            }
+        }
+        val usage = json.optJSONObject("usageMetadata")
+        return GeminiDirectorReply(
+            speakerAliases = aliases,
+            promptTokenCount = usage?.optInt("promptTokenCount") ?: 0,
+            responseTokenCount = usage?.optInt("candidatesTokenCount") ?: 0,
+            totalTokenCount = usage?.optInt("totalTokenCount") ?: 0
+        )
     }
 
     fun estimateMessageRequestTokens(
@@ -1110,16 +1198,60 @@ class GeminiChatService(
     }
 
     private fun geminiGenerationConfig(persona: PersonaEntity, maxOutputTokens: Int): JSONObject {
+        val effectiveBudget = if (persona.model.equals(FLASH_LITE_MODEL, ignoreCase = true)) {
+            FLASH_LITE_THINKING_BUDGET
+        } else {
+            persona.thinkingBudget?.takeIf { budget -> budget > 0 }
+        }
         return JSONObject()
             .put("temperature", persona.temperature.toDouble())
             .put("maxOutputTokens", maxOutputTokens)
             .apply {
-                persona.thinkingBudget
-                    ?.takeIf { budget -> budget > 0 }
-                    ?.let { budget ->
-                        put("thinkingConfig", JSONObject().put("thinkingBudget", budget))
-                    }
+                effectiveBudget?.let { budget ->
+                    put("thinkingConfig", JSONObject().put("thinkingBudget", budget))
+                }
             }
+    }
+
+    private suspend fun generateFlashLiteUtilityContent(
+        apiKey: String,
+        prompt: String,
+        temperature: Double,
+        maxOutputTokens: Int? = null,
+        responseMimeType: String? = null,
+        responseSchema: JSONObject? = null
+    ): String = withContext(Dispatchers.IO) {
+        val generationConfig = JSONObject()
+            .put("temperature", temperature)
+            .put("thinkingConfig", JSONObject().put("thinkingBudget", FLASH_LITE_THINKING_BUDGET))
+            .apply {
+                maxOutputTokens?.let { put("maxOutputTokens", it) }
+                responseMimeType?.let { put("responseMimeType", it) }
+                responseSchema?.let { put("responseSchema", it) }
+            }
+        val body = JSONObject()
+            .put(
+                "contents",
+                JSONArray().put(
+                    JSONObject()
+                        .put("role", "user")
+                        .put("parts", JSONArray().put(JSONObject().put("text", prompt)))
+                )
+            )
+            .put("generationConfig", generationConfig)
+            .put("safetySettings", geminiRestSafetySettings(SafetyLevel.None))
+        val json = postJson(
+            url = "https://generativelanguage.googleapis.com/v1beta/models/$FLASH_LITE_MODEL:generateContent",
+            headers = mapOf("x-goog-api-key" to apiKey),
+            body = body
+        )
+        json.optJSONArray("candidates")
+            ?.optJSONObject(0)
+            ?.optJSONObject("content")
+            ?.optJSONArray("parts")
+            ?.optJSONObject(0)
+            ?.optString("text")
+            .orEmpty()
     }
 
     private fun geminiRestSafetySettings(level: SafetyLevel): JSONArray {
