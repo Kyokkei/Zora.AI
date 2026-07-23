@@ -11,11 +11,13 @@ import com.yozora.aichat.data.db.PersonaEntity
 import com.yozora.aichat.ui.chat.ApiVendor
 import com.yozora.aichat.ui.chat.SafetyLevel
 import com.yozora.aichat.ui.chat.TokenEstimator
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
@@ -71,6 +73,12 @@ data class PersonaAutoFillResult(
     val beginnerLimits: String
 )
 
+class ApiHttpException(
+    val statusCode: Int,
+    val apiMessage: String,
+    val responseBody: String
+) : IOException("HTTP $statusCode: $apiMessage")
+
 private const val FALLBACK_MASTER_PROMPT = """
 You are a customizable AI companion. Follow the persona instruction prompt for the active session, keep replies immersive and useful, and ask for clarification when the user request is unclear.
 """
@@ -78,6 +86,18 @@ You are a customizable AI companion. Follow the persona instruction prompt for t
 private const val FLASH_LITE_MODEL = "gemini-3.1-flash-lite"
 private const val FLASH_LITE_THINKING_BUDGET = 8192
 private const val SUMMARIZER_MODEL = FLASH_LITE_MODEL
+
+private suspend fun <T> resultCatchingNonCancellation(
+    block: suspend () -> T
+): Result<T> {
+    return try {
+        Result.success(block())
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Throwable) {
+        Result.failure(error)
+    }
+}
 
 private const val SUMMARIZER_SYSTEM_PROMPT = """
 You are a conversation archiver. Compress the following chat log into a dense, structured summary under 250 words. Format it as:
@@ -90,6 +110,8 @@ Rules: Short phrases only. No filler. Preserve roleplay continuity and character
 class GeminiChatService(
     private val skillRepository: SkillRepository? = null
 ) {
+    private val doroAutoRouter = DoroAutoRouter()
+
     fun supportsImageInput(vendor: ApiVendor, model: String): Boolean {
         val normalized = model.lowercase(Locale.US)
         return when (vendor) {
@@ -114,30 +136,36 @@ class GeminiChatService(
         images: List<Bitmap>,
         webSearchEnabled: Boolean,
         masterPrompt: String? = null
-    ): Result<GeminiChatReply> = runCatching {
+    ): Result<GeminiChatReply> = resultCatchingNonCancellation {
         val finalSystemPrompt = finalSystemPrompt(masterPrompt, persona)
 
         when (vendor) {
-            ApiVendor.Google -> if (webSearchEnabled) {
-                sendGroundedGemini(
-                    apiKey = apiKey,
-                    persona = persona,
-                    history = history,
-                    userInput = userInput,
-                    finalSystemPrompt = finalSystemPrompt,
-                    safetyLevel = safetyLevel,
-                    images = images
-                )
-            } else {
-                sendGemini(
-                    apiKey = apiKey,
-                    persona = persona,
-                    history = history,
-                    userInput = userInput,
-                    finalSystemPrompt = finalSystemPrompt,
-                    safetyLevel = safetyLevel,
-                    images = images
-                )
+            ApiVendor.Google -> doroAutoRouter.run(
+                selectedModel = persona.model,
+                apiKey = apiKey
+            ) { resolvedModel ->
+                val resolvedPersona = persona.copy(model = resolvedModel)
+                if (webSearchEnabled) {
+                    sendGroundedGemini(
+                        apiKey = apiKey,
+                        persona = resolvedPersona,
+                        history = history,
+                        userInput = userInput,
+                        finalSystemPrompt = finalSystemPrompt,
+                        safetyLevel = safetyLevel,
+                        images = images
+                    )
+                } else {
+                    sendGemini(
+                        apiKey = apiKey,
+                        persona = resolvedPersona,
+                        history = history,
+                        userInput = userInput,
+                        finalSystemPrompt = finalSystemPrompt,
+                        safetyLevel = safetyLevel,
+                        images = images
+                    )
+                }
             }
 
             ApiVendor.Claude -> sendClaude(
@@ -172,7 +200,7 @@ class GeminiChatService(
         images: List<Bitmap>,
         enabledTools: Set<String>,
         masterPrompt: String? = null
-    ): Result<GeminiToolPlan> = runCatching {
+    ): Result<GeminiToolPlan> = resultCatchingNonCancellation {
         planToolUse(
             apiKey = apiKey,
             vendor = ApiVendor.Google,
@@ -196,20 +224,25 @@ class GeminiChatService(
         images: List<Bitmap>,
         enabledTools: Set<String>,
         masterPrompt: String? = null
-    ): Result<GeminiToolPlan> = runCatching {
+    ): Result<GeminiToolPlan> = resultCatchingNonCancellation {
         require(enabledTools.isNotEmpty()) { "No tools enabled." }
         val promptedSystem = finalSystemPrompt(masterPrompt, persona) + "\n\n" + toolUseInstruction(enabledTools)
         when (vendor) {
-            ApiVendor.Google -> sendGeminiToolPlanning(
-                apiKey = apiKey,
-                persona = persona,
-                history = history,
-                userInput = userInput,
-                finalSystemPrompt = promptedSystem,
-                safetyLevel = safetyLevel,
-                images = images,
-                enabledTools = enabledTools
-            )
+            ApiVendor.Google -> doroAutoRouter.run(
+                selectedModel = persona.model,
+                apiKey = apiKey
+            ) { resolvedModel ->
+                sendGeminiToolPlanning(
+                    apiKey = apiKey,
+                    persona = persona.copy(model = resolvedModel),
+                    history = history,
+                    userInput = userInput,
+                    finalSystemPrompt = promptedSystem,
+                    safetyLevel = safetyLevel,
+                    images = images,
+                    enabledTools = enabledTools
+                )
+            }
 
             ApiVendor.Claude -> sendClaudeToolPlanning(
                 apiKey = apiKey,
@@ -1340,28 +1373,38 @@ class GeminiChatService(
         headers: Map<String, String>,
         body: JSONObject
     ): JSONObject {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            doOutput = true
-            connectTimeout = 30_000
-            readTimeout = 120_000
-            setRequestProperty("Content-Type", "application/json")
-            headers.forEach { (key, value) -> setRequestProperty(key, value) }
+        val connection = URL(url).openConnection() as HttpURLConnection
+        return try {
+            connection.apply {
+                requestMethod = "POST"
+                doOutput = true
+                connectTimeout = 30_000
+                readTimeout = 120_000
+                setRequestProperty("Content-Type", "application/json")
+                headers.forEach { (key, value) -> setRequestProperty(key, value) }
+            }
+            OutputStreamWriter(connection.outputStream).use { writer ->
+                writer.write(body.toString())
+            }
+            val statusCode = connection.responseCode
+            val stream = if (statusCode in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream
+            }
+            val responseText = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (statusCode !in 200..299) {
+                val apiMessage = apiErrorMessage(responseText).ifBlank { responseText.take(160) }
+                throw ApiHttpException(
+                    statusCode = statusCode,
+                    apiMessage = apiMessage,
+                    responseBody = responseText
+                )
+            }
+            JSONObject(responseText)
+        } finally {
+            connection.disconnect()
         }
-        OutputStreamWriter(connection.outputStream).use { writer ->
-            writer.write(body.toString())
-        }
-        val stream = if (connection.responseCode in 200..299) {
-            connection.inputStream
-        } else {
-            connection.errorStream
-        }
-        val responseText = stream.bufferedReader().use { it.readText() }
-        if (connection.responseCode !in 200..299) {
-            val apiMessage = apiErrorMessage(responseText).ifBlank { responseText.take(160) }
-            error("HTTP ${connection.responseCode}: $apiMessage")
-        }
-        return JSONObject(responseText)
     }
 
     private fun apiErrorMessage(responseText: String): String {

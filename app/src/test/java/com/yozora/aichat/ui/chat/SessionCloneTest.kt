@@ -10,12 +10,12 @@ class SessionCloneTest {
     private val firstMember = GroupMember(
         id = "member-one",
         persona = PersonaUiState(displayName = "One"),
-        apiKey = "member-key-one"
+        selectedKey = SelectedApiKey.RawKey("member-key-one")
     )
     private val secondMember = GroupMember(
         id = "member-two",
         persona = PersonaUiState(displayName = "Two"),
-        apiKey = "member-key-two"
+        selectedKey = SelectedApiKey.RawKey("member-key-two")
     )
     private val firstMessage = ChatMessage(
         id = "message-one",
@@ -38,7 +38,7 @@ class SessionCloneTest {
         members = listOf(firstMember, secondMember),
         activeMemberId = secondMember.id,
         groupResponseMode = GroupResponseMode.Auto,
-        directorApiKey = "director-key",
+        directorSelectedKey = SelectedApiKey.RawKey("director-key"),
         archivedContext = "Archived scene",
         archivedMessageIds = setOf(firstMessage.id),
         messages = listOf(firstMessage, secondMessage)
@@ -49,8 +49,8 @@ class SessionCloneTest {
         val clone = source.localClone(includeMessages = false)
 
         assertNotEquals(source.id, clone.id)
-        assertEquals(listOf("member-key-one", "member-key-two"), clone.members.map { it.apiKey })
-        assertEquals("director-key", clone.directorApiKey)
+        assertEquals(listOf(SelectedApiKey.RawKey("member-key-one"), SelectedApiKey.RawKey("member-key-two")), clone.members.map { it.selectedKey })
+        assertEquals(SelectedApiKey.RawKey("director-key"), clone.directorSelectedKey)
         assertEquals(GroupResponseMode.Auto, clone.groupResponseMode)
         assertEquals(secondMember.persona, clone.persona)
         assertTrue(clone.messages.isEmpty())
@@ -64,8 +64,8 @@ class SessionCloneTest {
     fun fullCloneKeepsKeysAndRemapsConversationReferences() {
         val clone = source.localClone(includeMessages = true)
 
-        assertEquals(listOf("member-key-one", "member-key-two"), clone.members.map { it.apiKey })
-        assertEquals("director-key", clone.directorApiKey)
+        assertEquals(listOf(SelectedApiKey.RawKey("member-key-one"), SelectedApiKey.RawKey("member-key-two")), clone.members.map { it.selectedKey })
+        assertEquals(SelectedApiKey.RawKey("director-key"), clone.directorSelectedKey)
         assertEquals("Archived scene", clone.archivedContext)
         assertEquals(2, clone.messages.size)
         assertFalse(clone.messages.map { it.id }.any { it in source.messages.map(ChatMessage::id) })

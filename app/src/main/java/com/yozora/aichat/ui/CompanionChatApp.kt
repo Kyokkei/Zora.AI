@@ -37,6 +37,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -50,6 +51,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -72,6 +74,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -151,22 +154,31 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
@@ -207,7 +219,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.rememberAsyncImagePainter
+import com.yozora.aichat.BuildConfig
 import com.yozora.aichat.R
+import com.yozora.aichat.data.datastore.SavedApiKeyEntry
+import com.yozora.aichat.data.remote.isDoroAutoModel
+import com.yozora.aichat.data.remote.modelDisplayName
 import com.yozora.aichat.ui.chat.AnimeImagePreset
 import com.yozora.aichat.ui.chat.AppUpdateState
 import com.yozora.aichat.ui.chat.AppIconChoice
@@ -264,9 +280,6 @@ import kotlinx.coroutines.yield
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 
-private const val APP_VERSION_NAME = "2.2.5"
-private const val APP_VERSION_CODE = 230
-
 private fun Context.applyLanguageOverride(languageCode: String) {
     val locale = Locale.forLanguageTag(if (languageCode == "vi") "vi" else "en")
     Locale.setDefault(locale)
@@ -286,6 +299,58 @@ private enum class PersonaSettingsSection(val label: String) {
     ApiVault("API vault")
 }
 
+sealed interface OnboardingStep {
+    data class Spotlight(
+        val anchorKey: String,
+        val title: String,
+        val body: String,
+        val arrowEdge: ArrowEdge = ArrowEdge.Bottom
+    ) : OnboardingStep
+
+    data class InfoSlide(
+        val title: String,
+        val body: String,
+        val icon: ImageVector? = null,
+        val actions: List<SlideAction> = emptyList()
+    ) : OnboardingStep
+}
+
+enum class ArrowEdge { Top, Bottom, Start, End }
+
+data class SlideAction(val label: String, val action: OnboardingAction)
+
+sealed interface OnboardingAction {
+    data object Next : OnboardingAction
+    data object Finish : OnboardingAction
+    data class SetRoleplayMode(val enabled: Boolean) : OnboardingAction
+    data object DeepLinkApiKey : OnboardingAction
+    data object DeepLinkCreateChar : OnboardingAction
+}
+
+class OnboardingAnchorRegistry {
+    private val anchors = mutableStateMapOf<String, Rect>()
+
+    fun boundsFor(key: String): Rect? = anchors[key]
+    fun update(key: String, bounds: Rect) { anchors[key] = bounds }
+    fun remove(key: String) { anchors.remove(key) }
+}
+
+val LocalOnboardingAnchorRegistry = staticCompositionLocalOf { OnboardingAnchorRegistry() }
+
+fun Modifier.onboardingAnchor(key: String): Modifier = composed {
+    val registry = LocalOnboardingAnchorRegistry.current
+    DisposableEffect(registry, key) {
+        onDispose { registry.remove(key) }
+    }
+    onGloballyPositioned { registry.update(key, it.boundsInRoot()) }
+}
+
+private const val ONBOARDING_ANCHOR_API_KEY = "api_key"
+private const val ONBOARDING_ANCHOR_CREATE = "create_character"
+private const val ONBOARDING_ANCHOR_TEMPERATURE = "temperature"
+private const val ONBOARDING_ANCHOR_PROFILE = "my_profile"
+private const val ONBOARDING_ANCHOR_NSFW = "nsfw"
+
 @Composable
 fun CompanionChatApp(
     viewModel: ChatViewModel = viewModel()
@@ -293,17 +358,50 @@ fun CompanionChatApp(
     var viewedImageUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var actionMessage by remember { mutableStateOf<ChatMessage?>(null) }
     var aboutDialogVisible by remember { mutableStateOf(false) }
-    val appVersionLabel = "${viewModel.appNameChoice.label} v$APP_VERSION_NAME ($APP_VERSION_CODE)"
+    val appVersionLabel = "${viewModel.appNameChoice.label} v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
     var activeRoleplayTab by remember { mutableStateOf(RoleplayTab.Discover) }
     var activeChatOpen by remember { mutableStateOf(false) }
     var pendingConfigExportSession by remember { mutableStateOf<ChatSession?>(null) }
+    val onboardingAnchorRegistry = remember { OnboardingAnchorRegistry() }
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(viewModel.languageCode) {
         context.applyLanguageOverride(viewModel.languageCode)
     }
-    LaunchedEffect(viewModel.roleplayUiModeEnabled, viewModel.roleplayOnboardingCompleted) {
-        viewModel.showRoleplayOnboardingIfNeeded()
+    LaunchedEffect(viewModel.onboardingPreferencesLoaded, viewModel.onboardingCompleted) {
+        viewModel.showOnboardingIfNeeded()
+    }
+    LaunchedEffect(viewModel.onboardingVisible, viewModel.onboardingStepIndex, viewModel.roleplayUiModeEnabled) {
+        if (viewModel.onboardingVisible) {
+            when (viewModel.onboardingStepIndex) {
+                1, 4 -> {
+                    viewModel.closeSessionDrawer()
+                    viewModel.openPersonaSheet()
+                }
+                2 -> {
+                    viewModel.closePersonaSheet()
+                    if (viewModel.roleplayUiModeEnabled) {
+                        viewModel.closeSessionDrawer()
+                        activeChatOpen = false
+                        activeRoleplayTab = RoleplayTab.Create
+                    } else {
+                        viewModel.openSessionDrawer()
+                    }
+                }
+                5 -> {
+                    viewModel.closePersonaSheet()
+                    viewModel.closeSessionDrawer()
+                    if (viewModel.roleplayUiModeEnabled) {
+                        activeChatOpen = false
+                        activeRoleplayTab = RoleplayTab.Settings
+                    }
+                }
+                else -> {
+                    viewModel.closePersonaSheet()
+                    viewModel.closeSessionDrawer()
+                }
+            }
+        }
     }
     DisposableEffect(lifecycleOwner, viewModel) {
         val observer = LifecycleEventObserver { _, event ->
@@ -438,11 +536,12 @@ fun CompanionChatApp(
         return
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AppBackground)
-    ) {
+    CompositionLocalProvider(LocalOnboardingAnchorRegistry provides onboardingAnchorRegistry) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(AppBackground)
+        ) {
         if (viewModel.roleplayUiModeEnabled) {
             if (activeChatOpen) {
                 ChatScreen(
@@ -676,6 +775,7 @@ fun CompanionChatApp(
             modifier = Modifier.align(Alignment.CenterEnd)
         ) {
             PersonaSettingsSheet(
+                onboardingStepIndex = viewModel.onboardingStepIndex.takeIf { viewModel.onboardingVisible },
                 persona = viewModel.persona,
                 groupMembers = viewModel.groupMembers,
                 groupMemberApiKeyLabels = viewModel.groupMemberApiKeyLabels,
@@ -768,6 +868,20 @@ fun CompanionChatApp(
             )
         }
 
+            if (viewModel.onboardingVisible) {
+                InteractiveOnboardingOverlay(
+                    steps = onboardingSteps(),
+                    currentIndex = viewModel.onboardingStepIndex,
+                    anchorRegistry = onboardingAnchorRegistry,
+                    roleplayModeEnabled = viewModel.roleplayUiModeEnabled,
+                    onNext = viewModel::advanceOnboarding,
+                    onBack = viewModel::retreatOnboarding,
+                    onJump = viewModel::jumpToOnboardingStep,
+                    onAction = viewModel::handleOnboardingAction,
+                    onFinish = viewModel::completeOnboarding
+                )
+            }
+        }
     }
 
     if (viewModel.apiKeyDialogVisible) {
@@ -778,6 +892,30 @@ fun CompanionChatApp(
             onDismiss = viewModel::closeApiKeyDialog,
             onSave = viewModel::saveApiKey,
             secureInput = viewModel.apiKeyDialogSecure
+        )
+    }
+
+    if (viewModel.apiKeyPickerVisible) {
+        ApiKeyPickerSheet(
+            title = viewModel.apiKeyPickerTitle,
+            entries = viewModel.vaultEntries,
+            onSelect = viewModel::selectVaultEntryForTarget,
+            onUseCustom = viewModel::useCustomKeyForTarget,
+            onOpenVault = {
+                viewModel.closeApiKeyPicker()
+                viewModel.openVaultScreen()
+            },
+            onDismiss = viewModel::closeApiKeyPicker
+        )
+    }
+
+    if (viewModel.vaultScreenVisible) {
+        ApiKeyVaultScreen(
+            entries = viewModel.vaultEntries,
+            onAdd = viewModel::addVaultEntry,
+            onUpdate = viewModel::updateVaultEntry,
+            onDelete = viewModel::deleteVaultEntry,
+            onDismiss = viewModel::closeVaultScreen
         )
     }
 
@@ -794,6 +932,11 @@ fun CompanionChatApp(
             onNsfwModeChange = viewModel::updateNsfwModeEnabled,
             onRoleplayUiModeChange = viewModel::updateRoleplayUiModeEnabled,
             onLanguageChange = viewModel::updateLanguage,
+            onOpenApiKeyVault = viewModel::openVaultScreen,
+            onReplayOnboarding = {
+                viewModel.closeAppSettings()
+                viewModel.replayOnboarding()
+            },
             onDismiss = viewModel::closeAppSettings
         )
     }
@@ -858,10 +1001,6 @@ fun CompanionChatApp(
             onImport = { viewModel.confirmImportPreview(asCopy = false) },
             onImportAsCopy = { viewModel.confirmImportPreview(asCopy = true) }
         )
-    }
-
-    if (viewModel.roleplayOnboardingVisible) {
-        RoleplayOnboardingPager(onFinish = viewModel::completeRoleplayOnboarding)
     }
 
     if (aboutDialogVisible) {
@@ -2234,6 +2373,7 @@ private fun SessionDrawer(
                 iconRes = R.drawable.asset_chat,
                 label = "New chat",
                 highlighted = true,
+                modifier = Modifier.onboardingAnchor(ONBOARDING_ANCHOR_CREATE),
                 onClick = onNewSession
             )
             DrawerActionRow(
@@ -3591,13 +3731,14 @@ private fun DrawerActionRow(
     label: String,
     selected: Boolean = false,
     highlighted: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val contentColor = if (highlighted || selected) AppAccentSoft else AppTextPrimary
     Surface(
         color = if (selected) AppSurface2 else Color.Transparent,
         shape = RoundedCornerShape(14.dp),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(top = 6.dp)
             .clickable(onClick = onClick)
@@ -5482,6 +5623,7 @@ private fun AnnotatedString.Builder.appendDelimited(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PersonaSettingsSheet(
+    onboardingStepIndex: Int?,
     persona: PersonaUiState,
     groupMembers: List<GroupMember>,
     groupMemberApiKeyLabels: Map<String, String>,
@@ -5573,7 +5715,12 @@ private fun PersonaSettingsSheet(
     onSave: () -> Unit
 ) {
     var instructionPromptExpanded by remember { mutableStateOf(true) }
-    var selectedSection by remember { mutableStateOf(PersonaSettingsSection.Context) }
+    var selectedSection by remember(onboardingStepIndex) {
+        mutableStateOf(
+            if (onboardingStepIndex == 1 || onboardingStepIndex == 4) PersonaSettingsSection.ApiVault
+            else PersonaSettingsSection.Context
+        )
+    }
     var showTagPicker by remember { mutableStateOf(false) }
     var avatarCropRequest by remember { mutableStateOf<AvatarCropRequest?>(null) }
     var sessionAvatarCropRequest by remember { mutableStateOf<AvatarCropRequest?>(null) }
@@ -6949,7 +7096,9 @@ private fun MoreOptions(
                         onValueChange = onTemperatureChange,
                         valueRange = 0f..2f,
                         steps = 19,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onboardingAnchor(ONBOARDING_ANCHOR_TEMPERATURE)
                     )
                     if (showBackground) {
                         BackgroundOptions(
@@ -7168,7 +7317,8 @@ private fun ApiKeySummary(
                 keyLabel = activeApiKeyLabel,
                 emptyText = "No key saved",
                 onEdit = onEditApiKey,
-                onClear = onClearApiKey
+                onClear = onClearApiKey,
+                editButtonModifier = Modifier.onboardingAnchor(ONBOARDING_ANCHOR_API_KEY)
             )
             Spacer(modifier = Modifier.height(8.dp))
             Surface(
@@ -7275,7 +7425,8 @@ private fun ApiKeySlot(
     keyLabel: String?,
     emptyText: String,
     onEdit: () -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    editButtonModifier: Modifier = Modifier
 ) {
     Surface(
         color = AppBackground.copy(alpha = 0.32f),
@@ -7316,7 +7467,7 @@ private fun ApiKeySlot(
                 }
             }
             Row(modifier = Modifier.padding(top = 4.dp)) {
-                TextButton(onClick = onEdit) {
+                TextButton(onClick = onEdit, modifier = editButtonModifier) {
                     Text(
                         text = if (keyLabel == null) "Add key" else "Replace key",
                         color = AppAccentSoft
@@ -7478,6 +7629,8 @@ private fun AppSettingsDialog(
     onNsfwModeChange: (Boolean) -> Unit,
     onRoleplayUiModeChange: (Boolean) -> Unit,
     onLanguageChange: (String) -> Unit,
+    onOpenApiKeyVault: () -> Unit,
+    onReplayOnboarding: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val surfaceColor = if (useLightColors) Color.White else AppSurface
@@ -7515,6 +7668,43 @@ private fun AppSettingsDialog(
                     textSecondaryColor = textSecondaryColor,
                     accentColor = accentColor
                 )
+                Spacer(modifier = Modifier.height(18.dp))
+                Surface(
+                    color = surface2Color,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, strokeColor),
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = onReplayOnboarding)
+                ) {
+                    Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Info, contentDescription = null, tint = accentSoftColor)
+                        Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                            Text(stringResource(R.string.onboarding_replay_title), color = textPrimaryColor, style = MaterialTheme.typography.labelLarge)
+                            Text(stringResource(R.string.onboarding_replay_body), color = textSecondaryColor, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("Open", color = accentSoftColor, style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+                Spacer(modifier = Modifier.height(18.dp))
+                Surface(
+                    color = surface2Color,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, strokeColor),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onOpenApiKeyVault)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Shield, contentDescription = null, tint = accentSoftColor)
+                        Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                            Text("API Key Vault", color = textPrimaryColor, style = MaterialTheme.typography.labelLarge)
+                            Text("Save and name up to 20 model API keys.", color = textSecondaryColor, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("Open", color = accentSoftColor, style = MaterialTheme.typography.labelLarge)
+                    }
+                }
                 Spacer(modifier = Modifier.height(18.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
@@ -8169,6 +8359,215 @@ private fun createCameraImageUri(context: android.content.Context): android.net.
 }
 
 @Composable
+private fun ApiKeyPickerSheet(
+    title: String,
+    entries: List<SavedApiKeyEntry>,
+    onSelect: (String) -> Unit,
+    onUseCustom: () -> Unit,
+    onOpenVault: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = AppSurface,
+        title = { Text(title, color = AppTextPrimary) },
+        text = {
+            Column {
+                Text("SAVED KEYS", color = AppTextMuted, style = MaterialTheme.typography.labelSmall)
+                if (entries.isEmpty()) {
+                    Text(
+                        "No saved keys yet. Add one in Settings → API Key Vault.",
+                        color = AppTextSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(vertical = 16.dp)
+                    )
+                    OutlinedButton(onClick = onOpenVault, modifier = Modifier.fillMaxWidth()) {
+                        Text("Open API Key Vault")
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                        items(entries, key = { it.id }) { entry ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelect(entry.id) }
+                                    .padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(entry.name, color = AppTextPrimary, style = MaterialTheme.typography.labelLarge)
+                                    Text(maskVaultKey(entry.key), color = AppTextSecondary, style = MaterialTheme.typography.bodySmall)
+                                }
+                                Text("Use", color = AppAccentSoft, style = MaterialTheme.typography.labelLarge)
+                            }
+                            HorizontalDivider(color = AppStroke.copy(alpha = 0.55f))
+                        }
+                    }
+                }
+                HorizontalDivider(color = AppStroke, modifier = Modifier.padding(top = 10.dp))
+                TextButton(onClick = onUseCustom, modifier = Modifier.fillMaxWidth()) {
+                    Text("Use custom key…", color = AppAccentSoft)
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = AppTextSecondary) } }
+    )
+}
+
+@Composable
+private fun ApiKeyVaultScreen(
+    entries: List<SavedApiKeyEntry>,
+    onAdd: (String, String) -> Unit,
+    onUpdate: (String, String, String) -> Unit,
+    onDelete: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var editorEntry by remember { mutableStateOf<SavedApiKeyEntry?>(null) }
+    var adding by remember { mutableStateOf(false) }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            color = AppBackground,
+            modifier = Modifier.fillMaxSize(),
+            shape = RoundedCornerShape(0.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = AppTextPrimary)
+                    }
+                    Text("API Key Vault", color = AppTextPrimary, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                    Text("${entries.size}/20", color = AppTextSecondary, style = MaterialTheme.typography.labelLarge)
+                }
+                Text(
+                    "Keys stay on this device. Sessions reference saved entries by name and automatically use later key updates.",
+                    color = AppTextSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                )
+                if (entries.isEmpty()) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text("No saved API keys yet.", color = AppTextSecondary)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(entries, key = { it.id }) { entry ->
+                            VaultEntryRow(
+                                entry = entry,
+                                onEdit = { editorEntry = entry },
+                                onDelete = { onDelete(entry.id) }
+                            )
+                        }
+                    }
+                }
+                Button(
+                    onClick = { adding = true },
+                    enabled = entries.size < 20,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AppAccent)
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (entries.size < 20) "Add key" else "Vault full (20 keys)")
+                }
+            }
+        }
+    }
+    if (adding || editorEntry != null) {
+        VaultEntryEditSheet(
+            entry = editorEntry,
+            onSave = { name, key ->
+                editorEntry?.let { onUpdate(it.id, name, key) } ?: onAdd(name, key)
+                adding = false
+                editorEntry = null
+            },
+            onDismiss = {
+                adding = false
+                editorEntry = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun VaultEntryRow(
+    entry: SavedApiKeyEntry,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Surface(color = AppSurface, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, AppStroke)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(entry.name, color = AppTextPrimary, style = MaterialTheme.typography.labelLarge)
+                Text(maskVaultKey(entry.key), color = AppTextSecondary, style = MaterialTheme.typography.bodySmall)
+            }
+            IconButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, contentDescription = "Edit", tint = AppAccentSoft) }
+            IconButton(onClick = onDelete) { Icon(Icons.Rounded.DeleteOutline, contentDescription = "Delete", tint = Color(0xFFFF8A80)) }
+        }
+    }
+}
+
+@Composable
+private fun VaultEntryEditSheet(
+    entry: SavedApiKeyEntry?,
+    onSave: (String, String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember(entry?.id) { mutableStateOf(entry?.name.orEmpty()) }
+    var key by remember(entry?.id) { mutableStateOf(entry?.key.orEmpty()) }
+    var reveal by remember(entry?.id) { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = AppSurface,
+        title = { Text(if (entry == null) "Add API key" else "Edit API key", color = AppTextPrimary) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.take(48) },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = key,
+                    onValueChange = { key = it },
+                    label = { Text("Key") },
+                    singleLine = true,
+                    visualTransformation = if (reveal) VisualTransformation.None else PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Show key", color = AppTextSecondary, modifier = Modifier.weight(1f))
+                    Switch(checked = reveal, onCheckedChange = { reveal = it })
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(name.trim(), key.trim()) }, enabled = name.isNotBlank() && key.isNotBlank()) {
+                Text("Save", color = AppAccentSoft)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = AppTextSecondary) } }
+    )
+}
+
+private fun maskVaultKey(key: String): String = when {
+    key.length <= 10 -> "*".repeat(key.length)
+    else -> key.take(4) + "…" + key.takeLast(6)
+}
+
+@Composable
 private fun ApiKeyDialog(
     title: String,
     value: String,
@@ -8466,13 +8865,28 @@ private fun ModelDropdown(
     val models = vendor.modelOptions
     LabeledMenuBox(
         label = "Model",
-        value = selected,
+        value = modelDisplayName(selected),
         expanded = expanded,
+        selectedLeadingContent = if (vendor == ApiVendor.Google && isDoroAutoModel(selected)) {
+            { DoroAutoModeIcon() }
+        } else {
+            null
+        },
         onExpandedChange = { expanded = it }
     ) {
         models.forEach { model ->
             DropdownMenuItem(
-                text = { Text(text = model, color = AppTextPrimary) },
+                text = {
+                    if (vendor == ApiVendor.Google && isDoroAutoModel(model)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            DoroAutoModeIcon()
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(text = modelDisplayName(model), color = AppTextPrimary)
+                        }
+                    } else {
+                        Text(text = modelDisplayName(model), color = AppTextPrimary)
+                    }
+                },
                 onClick = {
                     onModelChange(model)
                     expanded = false
@@ -8483,12 +8897,23 @@ private fun ModelDropdown(
 }
 
 @Composable
+private fun DoroAutoModeIcon() {
+    Image(
+        painter = painterResource(R.drawable.doro_auto_mode),
+        contentDescription = null,
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.size(22.dp)
+    )
+}
+
+@Composable
 private fun LabeledMenuBox(
     label: String,
     value: String,
     expanded: Boolean,
     enabled: Boolean = true,
     onExpandedChange: (Boolean) -> Unit,
+    selectedLeadingContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     Text(
@@ -8510,6 +8935,10 @@ private fun LabeledMenuBox(
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                selectedLeadingContent?.let { leadingContent ->
+                    leadingContent()
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
                 Text(
                     text = value,
                     color = AppTextPrimary,
@@ -8802,6 +9231,10 @@ private fun RoleplayBottomBar(
                 Column(
                     modifier = Modifier
                         .weight(1f)
+                        .then(
+                            if (tab == RoleplayTab.Create) Modifier.onboardingAnchor(ONBOARDING_ANCHOR_CREATE)
+                            else Modifier
+                        )
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -11471,84 +11904,256 @@ private fun UserProfileScreen(
         }
     }
 }
-private data class OnboardingPage(
-    val icon: ImageVector,
-    val title: String,
-    val body: String
+@Composable
+private fun onboardingSteps(): List<OnboardingStep> = listOf(
+    OnboardingStep.InfoSlide(
+        title = stringResource(R.string.ob_welcome_title),
+        body = stringResource(R.string.ob_welcome_body),
+        icon = Icons.Rounded.AutoAwesome,
+        actions = listOf(
+            SlideAction(stringResource(R.string.ob_choose_roleplay), OnboardingAction.SetRoleplayMode(true)),
+            SlideAction(stringResource(R.string.ob_choose_legacy), OnboardingAction.SetRoleplayMode(false))
+        )
+    ),
+    OnboardingStep.Spotlight(ONBOARDING_ANCHOR_API_KEY, stringResource(R.string.ob_apikey_title), stringResource(R.string.ob_apikey_body)),
+    OnboardingStep.Spotlight(ONBOARDING_ANCHOR_CREATE, stringResource(R.string.ob_create_title), stringResource(R.string.ob_create_body)),
+    OnboardingStep.InfoSlide(stringResource(R.string.ob_persona_title), stringResource(R.string.ob_persona_body), Icons.Rounded.Settings),
+    OnboardingStep.Spotlight(ONBOARDING_ANCHOR_TEMPERATURE, stringResource(R.string.ob_temperature_title), stringResource(R.string.ob_temperature_body)),
+    OnboardingStep.Spotlight(ONBOARDING_ANCHOR_PROFILE, stringResource(R.string.ob_bio_title), stringResource(R.string.ob_bio_body)),
+    OnboardingStep.InfoSlide(stringResource(R.string.ob_toggles_title), stringResource(R.string.ob_toggles_body), Icons.Rounded.Shield),
+    OnboardingStep.InfoSlide(stringResource(R.string.ob_uimode_title), stringResource(R.string.ob_uimode_body), Icons.Rounded.ChatBubbleOutline),
+    OnboardingStep.InfoSlide(stringResource(R.string.ob_multiagent_title), stringResource(R.string.ob_multiagent_body), Icons.Rounded.Person),
+    OnboardingStep.InfoSlide(
+        title = stringResource(R.string.ob_done_title),
+        body = stringResource(R.string.ob_done_body),
+        icon = Icons.Rounded.Done,
+        actions = listOf(
+            SlideAction(stringResource(R.string.ob_set_apikey), OnboardingAction.DeepLinkApiKey),
+            SlideAction(stringResource(R.string.ob_create_char), OnboardingAction.DeepLinkCreateChar)
+        )
+    )
 )
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RoleplayOnboardingPager(onFinish: () -> Unit) {
-    val pages = listOf(
-        OnboardingPage(Icons.Rounded.Shield, stringResource(R.string.onboarding_private_title), stringResource(R.string.onboarding_private_body)),
-        OnboardingPage(Icons.Rounded.Public, stringResource(R.string.onboarding_discover_title), stringResource(R.string.onboarding_discover_body)),
-        OnboardingPage(Icons.Rounded.AutoAwesome, stringResource(R.string.onboarding_create_title), stringResource(R.string.onboarding_create_body)),
-        OnboardingPage(Icons.Rounded.ChatBubbleOutline, stringResource(R.string.onboarding_chat_title), stringResource(R.string.onboarding_chat_body))
+private fun InteractiveOnboardingOverlay(
+    steps: List<OnboardingStep>,
+    currentIndex: Int,
+    anchorRegistry: OnboardingAnchorRegistry,
+    roleplayModeEnabled: Boolean,
+    onNext: () -> Unit,
+    onBack: () -> Unit,
+    onJump: (Int) -> Unit,
+    onAction: (OnboardingAction) -> Unit,
+    onFinish: () -> Unit
+) {
+    val step = steps[currentIndex.coerceIn(steps.indices)]
+    val pulse by rememberInfiniteTransition(label = "onboarding-pulse").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse),
+        label = "spotlight-pulse"
     )
-    val pagerState = rememberPagerState(pageCount = { pages.size })
-    val scope = rememberCoroutineScope()
-    Surface(modifier = Modifier.fillMaxSize(), color = LocalRoleplayColors.current.background) {
-        Column(
-            modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {}
+            )
+    ) {
+        val density = LocalDensity.current
+        val viewportWidth = with(density) { maxWidth.toPx() }
+        val viewportHeight = with(density) { maxHeight.toPx() }
+        val rawAnchor = (step as? OnboardingStep.Spotlight)?.let { anchorRegistry.boundsFor(it.anchorKey) }
+        val anchor = rawAnchor?.takeIf {
+            it.width > 0f && it.height > 0f && it.right > 0f && it.bottom > 0f &&
+                it.left < viewportWidth && it.top < viewportHeight
+        }
+
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
         ) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onFinish) { Text(stringResource(R.string.onboarding_skip), color = LocalRoleplayColors.current.textSecondary) }
+            drawRect(Color.Black.copy(alpha = 0.55f))
+            if (anchor != null) {
+                val expansion = 10.dp.toPx() + pulse * 4.dp.toPx()
+                drawRoundRect(
+                    color = Color.Transparent,
+                    topLeft = Offset(anchor.left - expansion, anchor.top - expansion),
+                    size = Size(anchor.width + expansion * 2, anchor.height + expansion * 2),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx()),
+                    blendMode = BlendMode.Clear
+                )
             }
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.weight(1f).fillMaxWidth()
-            ) { pageIndex ->
-                val page = pages[pageIndex]
-                Column(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+        }
+
+        OnboardingCard(
+            step = step,
+            currentIndex = currentIndex,
+            stepCount = steps.size,
+            roleplayModeEnabled = roleplayModeEnabled,
+            onBack = onBack,
+            onNext = onNext,
+            onJump = onJump,
+            onAction = onAction,
+            onFinish = onFinish,
+            modifier = if (anchor == null) {
+                Modifier.align(Alignment.Center)
+            } else {
+                val anchorBottom = with(density) { anchor.bottom.toDp() }
+                val anchorTop = with(density) { anchor.top.toDp() }
+                val placeBelow = anchor.bottom < viewportHeight * 0.48f
+                val desiredY = if (placeBelow) anchorBottom + 18.dp else anchorTop - 330.dp
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = desiredY.coerceIn(16.dp, (maxHeight - 330.dp).coerceAtLeast(16.dp)))
+            }
+        )
+    }
+}
+
+@Composable
+private fun OnboardingCard(
+    step: OnboardingStep,
+    currentIndex: Int,
+    stepCount: Int,
+    roleplayModeEnabled: Boolean,
+    onBack: () -> Unit,
+    onNext: () -> Unit,
+    onJump: (Int) -> Unit,
+    onAction: (OnboardingAction) -> Unit,
+    onFinish: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val title = when (step) {
+        is OnboardingStep.InfoSlide -> step.title
+        is OnboardingStep.Spotlight -> step.title
+    }
+    val body = when (step) {
+        is OnboardingStep.InfoSlide -> step.body
+        is OnboardingStep.Spotlight -> step.body
+    }
+    val actions = (step as? OnboardingStep.InfoSlide)?.actions.orEmpty()
+
+    Surface(
+        color = AppSurface,
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, AppStroke),
+        shadowElevation = 16.dp,
+        modifier = modifier
+            .padding(horizontal = 18.dp)
+            .widthIn(max = 520.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onFinish) {
+                    Text(stringResource(R.string.onboarding_skip), color = AppTextSecondary)
+                }
+            }
+            (step as? OnboardingStep.InfoSlide)?.icon?.let {
+                Icon(it, contentDescription = null, tint = AppAccentSoft, modifier = Modifier.size(38.dp))
+                Spacer(Modifier.height(10.dp))
+            }
+            Text(title, color = AppTextPrimary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            Text(body, color = AppTextSecondary, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 10.dp))
+
+            if (currentIndex == 0) {
+                OnboardingModePreviews(modifier = Modifier.padding(top = 16.dp))
+            }
+
+            if (actions.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = LocalRoleplayColors.current.accent.copy(alpha = 0.14f),
-                        modifier = Modifier.size(104.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(page.icon, contentDescription = null, tint = LocalRoleplayColors.current.accent, modifier = Modifier.size(48.dp))
+                    actions.forEach { action ->
+                        val selectedMode = when (action.action) {
+                            is OnboardingAction.SetRoleplayMode -> action.action.enabled == roleplayModeEnabled
+                            else -> false
+                        }
+                        if (selectedMode || actions.none { it.action is OnboardingAction.SetRoleplayMode }) {
+                            Button(
+                                onClick = { onAction(action.action) },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = AppAccent)
+                            ) { Text(action.label, maxLines = 2, textAlign = TextAlign.Center) }
+                        } else {
+                            OutlinedButton(onClick = { onAction(action.action) }, modifier = Modifier.weight(1f)) {
+                                Text(action.label, maxLines = 2, textAlign = TextAlign.Center)
+                            }
                         }
                     }
-                    Text(page.title, color = LocalRoleplayColors.current.textPrimary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 28.dp))
-                    Text(page.body, color = LocalRoleplayColors.current.textSecondary, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp))
                 }
             }
-            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(
-                    enabled = pagerState.currentPage > 0,
-                    onClick = { scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) } },
-                    modifier = Modifier.width(72.dp)
-                ) { Text(stringResource(R.string.onboarding_back)) }
-                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.Center) {
-                    pages.indices.forEach { index ->
-                        Box(
-                            modifier = Modifier
-                                .padding(horizontal = 4.dp)
-                                .size(if (pagerState.currentPage == index) 22.dp else 8.dp, 8.dp)
-                                .clip(CircleShape)
-                                .background(if (pagerState.currentPage == index) LocalRoleplayColors.current.accent else LocalRoleplayColors.current.stroke)
-                        )
-                    }
+            if (currentIndex == 0) {
+                Text(stringResource(R.string.ob_welcome_hint), color = AppTextMuted, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 10.dp))
+            }
+
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.Center) {
+                repeat(stepCount) { index ->
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 2.dp)
+                            .size(if (index == currentIndex) 18.dp else 7.dp, 7.dp)
+                            .clip(CircleShape)
+                            .background(if (index == currentIndex) AppAccentSoft else AppStroke)
+                            .clickable { onJump(index) }
+                    )
                 }
-                Spacer(modifier = Modifier.width(72.dp))
             }
-            Button(
-                onClick = {
-                    if (pagerState.currentPage == pages.lastIndex) onFinish()
-                    else scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = LocalRoleplayColors.current.accent),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().height(52.dp)
-            ) {
-                Text(if (pagerState.currentPage == pages.lastIndex) stringResource(R.string.onboarding_start) else stringResource(R.string.onboarding_next), color = Color.White, fontWeight = FontWeight.Bold)
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack, enabled = currentIndex > 0) {
+                    Text(stringResource(R.string.onboarding_back))
+                }
+                Spacer(Modifier.weight(1f))
+                Button(onClick = onNext, colors = ButtonDefaults.buttonColors(containerColor = AppAccent)) {
+                    Text(if (currentIndex == stepCount - 1) stringResource(R.string.onboarding_start) else stringResource(R.string.onboarding_next))
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun OnboardingModePreviews(modifier: Modifier = Modifier) {
+    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OnboardingModePreview(
+            title = "RoleplayUI",
+            subtitle = "Immersive, story-focused",
+            background = Color(0xFF17131D),
+            accent = Color(0xFFFF5D8F),
+            modifier = Modifier.weight(1f)
+        )
+        OnboardingModePreview(
+            title = "Legacy",
+            subtitle = "Simple and easy to navigate",
+            background = Color(0xFFE9E9EC),
+            accent = Color(0xFF777783),
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun OnboardingModePreview(
+    title: String,
+    subtitle: String,
+    background: Color,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(color = background, shape = RoundedCornerShape(16.dp), modifier = modifier.height(128.dp)) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Text(title, color = if (background.luminance() > 0.5f) Color.Black else Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+            Box(modifier = Modifier.fillMaxWidth().weight(1f).padding(vertical = 8.dp)) {
+                Box(Modifier.align(Alignment.TopStart).fillMaxWidth(0.72f).height(12.dp).clip(CircleShape).background(accent.copy(alpha = 0.45f)))
+                Box(Modifier.align(Alignment.CenterEnd).fillMaxWidth(0.62f).height(18.dp).clip(CircleShape).background(accent))
+                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(0.78f).height(14.dp).clip(CircleShape).background(accent.copy(alpha = 0.55f)))
+            }
+            Text(subtitle, color = if (background.luminance() > 0.5f) Color.DarkGray else Color.LightGray, style = MaterialTheme.typography.labelSmall, maxLines = 2)
         }
     }
 }
@@ -11585,6 +12190,7 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 12.dp)
+                .onboardingAnchor(ONBOARDING_ANCHOR_PROFILE)
                 .clickable { showProfileScreen = true }
         ) {
             Row(
@@ -11626,7 +12232,7 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
             color = LocalRoleplayColors.current.surface,
             shape = RoundedCornerShape(16.dp),
             border = BorderStroke(1.dp, LocalRoleplayColors.current.stroke),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).clickable { viewModel.replayRoleplayOnboarding() }
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).clickable { viewModel.replayOnboarding() }
         ) {
             Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Info, contentDescription = null, tint = LocalRoleplayColors.current.accent)
@@ -11745,7 +12351,8 @@ private fun RoleplaySettingsScreen(viewModel: ChatViewModel) {
                     }
                     Switch(
                         checked = viewModel.nsfwModeEnabled,
-                        onCheckedChange = { viewModel.updateNsfwModeEnabled(it) }
+                        onCheckedChange = { viewModel.updateNsfwModeEnabled(it) },
+                        modifier = Modifier.onboardingAnchor(ONBOARDING_ANCHOR_NSFW)
                     )
                 }
             }

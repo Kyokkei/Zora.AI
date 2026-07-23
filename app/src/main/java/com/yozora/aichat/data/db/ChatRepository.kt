@@ -12,8 +12,11 @@ import com.yozora.aichat.ui.chat.GroupResponseMode
 import com.yozora.aichat.ui.chat.GeminiThinkingEffort
 import com.yozora.aichat.ui.chat.InstructionMode
 import com.yozora.aichat.ui.chat.MessageDeliveryStatus
+import com.yozora.aichat.ui.chat.normalizeStoredModel
 import com.yozora.aichat.ui.chat.PersonaUiState
 import com.yozora.aichat.ui.chat.SafetyLevel
+import com.yozora.aichat.ui.chat.selectedApiKeyFromStored
+import com.yozora.aichat.ui.chat.toStoredString
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -56,7 +59,7 @@ class ChatRepository private constructor(
                     3 -> GroupResponseMode.Three
                     else -> GroupResponseMode.One
                 },
-                directorApiKey = sessionEntity.directorApiKey,
+                directorSelectedKey = selectedApiKeyFromStored(sessionEntity.directorApiKey),
                 memoryEnabled = sessionEntity.memoryEnabled,
                 storyLore = sessionEntity.storyLore.ifBlank {
                     sequence {
@@ -100,7 +103,7 @@ class ChatRepository private constructor(
                     ?.coerceAtMost(3)
                     ?: 1,
                 groupResponseMode = session.groupResponseMode.name,
-                directorApiKey = session.directorApiKey,
+                directorApiKey = session.directorSelectedKey.toStoredString(),
                 memoryEnabled = session.memoryEnabled,
                 storyLore = session.storyLore.take(16_000),
                 archivedContext = session.archivedContext,
@@ -126,7 +129,7 @@ class ChatRepository private constructor(
                     id = member.id,
                     sessionId = session.id,
                     personaJson = member.persona.toJsonString(),
-                    apiKey = member.apiKey,
+                    apiKey = member.selectedKey.toStoredString(),
                     position = index
                 )
             }
@@ -220,7 +223,7 @@ private fun GroupMemberEntity.toGroupMember(): GroupMember {
     return GroupMember(
         id = id,
         persona = personaJson.toPersonaUiState(),
-        apiKey = apiKey
+        selectedKey = selectedApiKeyFromStored(apiKey)
     )
 }
 
@@ -304,7 +307,7 @@ private fun String.toPersonaUiState(): PersonaUiState {
         beginnerLimits = json.optString("beginnerLimits"),
         instructionPrompt = restoredPrompt,
         vendor = vendor,
-        model = json.optString("model").ifBlank { vendor.defaultModel },
+        model = normalizeStoredModel(vendor, json.optString("model")),
         safetyLevel = SafetyLevel.entries.firstOrNull { it.name == json.optString("safetyLevel") } ?: SafetyLevel.None,
         thinkingEffort = GeminiThinkingEffort.entries.firstOrNull { it.name == json.optString("thinkingEffort") }
             ?: GeminiThinkingEffort.Low,

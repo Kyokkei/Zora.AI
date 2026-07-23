@@ -31,11 +31,17 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yozora.aichat.data.SkillRepository
 import com.yozora.aichat.data.datastore.ApiKeyManager
+import com.yozora.aichat.data.datastore.SavedApiKeyEntry
 import com.yozora.aichat.data.datastore.settingsDataStore
 import com.yozora.aichat.data.db.ChatRepository
 import com.yozora.aichat.data.db.MessageEntity
+import com.yozora.aichat.ui.OnboardingAction
 import com.yozora.aichat.data.db.PersonaEntity
 import com.yozora.aichat.data.db.TtsAudioCacheEntity
+import com.yozora.aichat.data.remote.ApiHttpException
+import com.yozora.aichat.data.remote.DORO_AUTO_FALLBACK_MODELS
+import com.yozora.aichat.data.remote.DORO_AUTO_MODEL_ID
+import com.yozora.aichat.data.remote.DoroAutoExhaustedException
 import com.yozora.aichat.data.remote.ElevenLabsTtsException
 import com.yozora.aichat.data.remote.ElevenLabsTtsRepository
 import com.yozora.aichat.data.remote.GeminiChatReply
@@ -214,8 +220,8 @@ enum class ApiVendor(
     Google(
         "google",
         "Google",
-        "gemini-3.1-flash-lite",
-        listOf("gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite", "gemini-3-flash")
+        DORO_AUTO_MODEL_ID,
+        listOf(DORO_AUTO_MODEL_ID) + DORO_AUTO_FALLBACK_MODELS
     ),
     GPT(
         "gpt",
@@ -379,7 +385,7 @@ enum class VoiceCallCameraFacing {
 data class GroupMember(
     val id: String = UUID.randomUUID().toString(),
     val persona: PersonaUiState = PersonaUiState(),
-    val apiKey: String = ""
+    val selectedKey: SelectedApiKey = SelectedApiKey.None
 )
 
 data class ProjectUiState(
@@ -403,7 +409,7 @@ data class ChatSession(
     val members: List<GroupMember> = listOf(GroupMember(persona = persona)),
     val activeMemberId: String = members.firstOrNull()?.id ?: "",
     val groupResponseMode: GroupResponseMode = GroupResponseMode.Auto,
-    val directorApiKey: String = "",
+    val directorSelectedKey: SelectedApiKey = SelectedApiKey.None,
     val memoryEnabled: Boolean = true,
     val storyLore: String = "",
     val archivedContext: String = "",
@@ -456,7 +462,7 @@ data class PersonaUiState(
     val beginnerLimits: String = "",
     val instructionPrompt: String = "",
     val vendor: ApiVendor = ApiVendor.Google,
-    val model: String = "gemini-3.1-flash-lite",
+    val model: String = DORO_AUTO_MODEL_ID,
     val safetyLevel: SafetyLevel = SafetyLevel.None,
     val thinkingEffort: GeminiThinkingEffort = GeminiThinkingEffort.Low,
     val temperature: Float = 1.0f,
@@ -468,6 +474,13 @@ data class PersonaUiState(
     val avatarTransformNormalized: Boolean = false,
     val traits: List<String> = emptyList()
 )
+
+internal fun normalizeStoredModel(vendor: ApiVendor, storedModel: String): String =
+    when {
+        storedModel.isBlank() -> vendor.defaultModel
+        vendor == ApiVendor.Google && storedModel == "gemini-3.1-pro" -> DORO_AUTO_MODEL_ID
+        else -> storedModel
+    }
 
 data class QuotaUsageState(
     val day: String = currentDay(),
@@ -581,6 +594,12 @@ private sealed class ApiKeyDialogTarget {
     data class GroupMemberKey(val memberId: String) : ApiKeyDialogTarget()
 }
 
+sealed interface ApiKeyPickerTarget {
+    data object Provider : ApiKeyPickerTarget
+    data object Director : ApiKeyPickerTarget
+    data class Member(val memberId: String) : ApiKeyPickerTarget
+}
+
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val settingsDataStore = application.settingsDataStore
     private val apiKeyManager = ApiKeyManager(settingsDataStore)
@@ -613,10 +632,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val hubUsernameKey = stringPreferencesKey("zora_hub_username_v1")
     private val nsfwModeEnabledKey = booleanPreferencesKey("nsfw_mode_enabled_v1")
     private val summarizerSeparateKeyKey = booleanPreferencesKey("summarizer_use_separate_key")
-    private val roleplayUiModeEnabledKey = booleanPreferencesKey("roleplay_ui_mode_enabled_v2")
     private val roleplayLightModeKey = booleanPreferencesKey("roleplay_light_mode_enabled_v1")
     private val roleplayBubbleGlassModeKey = stringPreferencesKey("roleplay_bubble_glass_mode_v1")
-    private val roleplayOnboardingCompletedKey = booleanPreferencesKey("roleplay_onboarding_completed_v1")
     private val levelSystemMigratedKey = booleanPreferencesKey("level_system_migrated_v1")
     private var restoringState = false
     private val persistMutex = Mutex()
@@ -650,6 +667,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     var apiKeyDialogVisible by mutableStateOf(false)
         private set
 
+    var apiKeyPickerVisible by mutableStateOf(false)
+        private set
+
+    var vaultScreenVisible by mutableStateOf(false)
+        private set
+
     var appSettingsVisible by mutableStateOf(false)
         private set
 
@@ -660,8 +683,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         private set
 
     private var apiKeyDialogTarget: ApiKeyDialogTarget = ApiKeyDialogTarget.Provider
+    private var apiKeyPickerTarget: ApiKeyPickerTarget = ApiKeyPickerTarget.Provider
 
-    var savedApiKeys by mutableStateOf<Map<String, String>>(emptyMap())
+    var selectedProviderKeys by mutableStateOf<Map<String, SelectedApiKey>>(emptyMap())
+        private set
+
+    var vaultEntries by mutableStateOf<List<SavedApiKeyEntry>>(emptyList())
         private set
 
     var tavilyApiKeyLabel by mutableStateOf<String?>(null)
@@ -785,7 +812,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     var nsfwModeEnabled by mutableStateOf(true)
         private set
 
-    var roleplayUiModeEnabled by mutableStateOf(false)
+    var roleplayUiModeEnabled by mutableStateOf(DEFAULT_ROLEPLAY_UI_ENABLED)
         private set
 
     var roleplayLightModeEnabled by mutableStateOf(false)
@@ -794,10 +821,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     var roleplayBubbleGlassMode by mutableStateOf(BubbleGlassMode.Off)
         private set
 
-    var roleplayOnboardingCompleted by mutableStateOf(false)
+    var onboardingCompleted by mutableStateOf(false)
         private set
 
-    var roleplayOnboardingVisible by mutableStateOf(false)
+    var onboardingVisible by mutableStateOf(false)
+        private set
+
+    var onboardingStepIndex by mutableStateOf(0)
+        private set
+
+    var onboardingPreferencesLoaded by mutableStateOf(false)
         private set
 
     var languageCode by mutableStateOf("en")
@@ -861,7 +894,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         get() = activeSession.groupResponseMode
 
     val directorApiKeyLabel: String?
-        get() = activeSession.directorApiKey.takeIf { it.isNotBlank() }?.let(apiKeyManager::mask)
+        get() = labelForSelectedKey(activeSession.directorSelectedKey)
 
     val memoryEnabled: Boolean
         get() = activeSession.memoryEnabled
@@ -899,16 +932,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     val activeApiKeyLabel: String?
-        get() = savedApiKeys[persona.vendor.id]?.let(apiKeyManager::mask)
+        get() = labelForSelectedKey(selectedProviderKeys[persona.vendor.id] ?: SelectedApiKey.None)
 
     val activeIndividualApiKeyLabel: String?
-        get() = activeGroupMember.apiKey.takeIf { it.isNotBlank() }?.let(apiKeyManager::mask)
+        get() = labelForSelectedKey(activeGroupMember.selectedKey)
 
     val groupMemberApiKeyLabels: Map<String, String>
         get() = groupMembers.mapNotNull { member ->
-            member.apiKey.takeIf { it.isNotBlank() }
-                ?.let { key -> member.id to apiKeyManager.mask(key) }
+            labelForSelectedKey(member.selectedKey)?.let { member.id to it }
         }.toMap()
+
+    val apiKeyPickerTitle: String
+        get() = when (val target = apiKeyPickerTarget) {
+            ApiKeyPickerTarget.Provider -> "Pick API key for ${persona.vendor.label}"
+            ApiKeyPickerTarget.Director -> "Group Director API key"
+            is ApiKeyPickerTarget.Member -> "API key for ${groupMembers.firstOrNull { it.id == target.memberId }?.persona?.displayName ?: "member"}"
+        }
 
     val apiKeyDialogTitle: String
         get() = when (apiKeyDialogTarget) {
@@ -972,12 +1011,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 nsfwModeEnabled = restoredNsfw
                 nsfwModeEnabledValue = restoredNsfw
                 summarizerUsesSeparateKey = preferences[summarizerSeparateKeyKey] ?: false
-                roleplayUiModeEnabled = preferences[roleplayUiModeEnabledKey] ?: false
+                roleplayUiModeEnabled = preferences.roleplayUiModeEnabled()
                 roleplayLightModeEnabled = preferences[roleplayLightModeKey] ?: false
                 roleplayBubbleGlassMode = preferences[roleplayBubbleGlassModeKey]
                     ?.let { stored -> BubbleGlassMode.entries.firstOrNull { it.name == stored } }
                     ?: BubbleGlassMode.Off
-                roleplayOnboardingCompleted = preferences[roleplayOnboardingCompletedKey] ?: false
+                onboardingCompleted = preferences.onboardingCompleted()
+                onboardingPreferencesLoaded = true
                 languageCode = preferences[languageCodeKey] ?: "en"
                 hubToken = preferences[hubTokenKey]
                 hubUsername = preferences[hubUsernameKey]
@@ -985,8 +1025,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            apiKeyManager.providerKeys(ApiVendor.entries.map { it.id }).collectLatest { keys ->
-                savedApiKeys = keys
+            apiKeyManager.providerSelectedKeys(ApiVendor.entries.map { it.id }).collectLatest { keys ->
+                selectedProviderKeys = keys
+            }
+        }
+        viewModelScope.launch {
+            apiKeyManager.vaultEntries().collectLatest { entries ->
+                vaultEntries = entries
             }
         }
         viewModelScope.launch {
@@ -1090,9 +1135,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
             }
-            val apiKey = apiKeyManager.keyForProvider(provider.id)
+            val apiKey = resolveProviderKey(provider.id)
             if (apiKey == null) {
-                apiKeyDialogVisible = true
+                openApiKeyPicker(ApiKeyPickerTarget.Provider)
                 chatError = "Add a ${provider.label} API key first."
                 return@launch
             }
@@ -1299,9 +1344,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val apiKey = resolvedApiKeyOrNull(targetMember)
             if (apiKey.isNullOrBlank()) {
                 selectGroupMember(targetMember.id)
-                apiKeyDialogTarget = ApiKeyDialogTarget.Provider
-                apiKeyDraft = ""
-                apiKeyDialogVisible = true
+                openApiKeyPicker(
+                    if (targetMember.selectedKey == SelectedApiKey.None) ApiKeyPickerTarget.Provider
+                    else ApiKeyPickerTarget.Member(targetMember.id)
+                )
                 chatError = "Add a ${provider.label} API key for ${targetMember.persona.displayName} first."
                 return@launch
             }
@@ -1390,11 +1436,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val turnSpeakers = when {
                 explicitlyRequested != null -> explicitlyRequested
                 session.groupResponseMode == GroupResponseMode.Auto -> {
-                    val directorKey = session.directorApiKey.trim()
-                    if (directorKey.isBlank()) {
-                        apiKeyDialogTarget = ApiKeyDialogTarget.DirectorKey
-                        apiKeyDraft = ""
-                        apiKeyDialogVisible = true
+                    val directorKey = resolveKey(session.directorSelectedKey)
+                    if (directorKey.isNullOrBlank()) {
+                        openApiKeyPicker(ApiKeyPickerTarget.Director)
                         chatError = "Add the Group Director API key to use Auto routing."
                         return@launch
                     }
@@ -1440,9 +1484,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             if (missingKeyMember != null) {
                 selectGroupMember(missingKeyMember.id)
-                apiKeyDialogTarget = ApiKeyDialogTarget.Provider
-                apiKeyDraft = ""
-                apiKeyDialogVisible = true
+                openApiKeyPicker(
+                    if (missingKeyMember.selectedKey == SelectedApiKey.None) ApiKeyPickerTarget.Provider
+                    else ApiKeyPickerTarget.Member(missingKeyMember.id)
+                )
                 chatError = "Add a ${missingKeyMember.persona.vendor.label} API key for ${missingKeyMember.persona.displayName} first."
                 return@launch
             }
@@ -1479,6 +1524,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             val responderFailures = mutableListOf<String>()
+            val responderFailureThrowables = mutableListOf<Throwable>()
             var successfulResponses = 0
             turnSpeakers.forEachIndexed { turnIndex, member ->
                 runCatching {
@@ -1523,10 +1569,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         )
                         successfulResponses++
                 }.onFailure { throwable ->
+                    responderFailureThrowables += throwable
                     responderFailures += "${member.persona.displayName}: ${friendlySendError(throwable)}"
                 }
             }
             if (successfulResponses == 0 && responderFailures.isNotEmpty()) {
+                if (responderFailureThrowables.all(::isRateLimitError)) {
+                    handleSendFailure(responderFailureThrowables.first(), userMessage.id)
+                    return@launch
+                }
                 updateMessageDeliveryStatus(userMessage.id, MessageDeliveryStatus.Failed)
             }
             chatError = when {
@@ -1651,7 +1702,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             )
             chatError = null
 
-            val googleKey = apiKeyManager.keyForProvider(ApiVendor.Google.id)
+            val googleKey = resolveProviderKey(ApiVendor.Google.id)
             val preparedText = if (!googleKey.isNullOrBlank()) {
                 geminiChatService.prepareJapaneseSpeechText(
                     apiKey = googleKey,
@@ -2160,7 +2211,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         voiceCallStatus = "Connecting..."
         voiceCallError = null
         viewModelScope.launch {
-            val apiKey = apiKeyManager.keyForProvider(ApiVendor.Google.id)
+            val apiKey = resolveProviderKey(ApiVendor.Google.id)
             if (apiKey.isNullOrBlank()) {
                 voiceCallActive = false
                 voiceCallStatus = "Idle"
@@ -3405,9 +3456,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openApiKeyDialog() {
-        apiKeyDialogTarget = ApiKeyDialogTarget.Provider
-        apiKeyDraft = ""
-        apiKeyDialogVisible = true
+        openApiKeyPicker(ApiKeyPickerTarget.Provider)
     }
 
     fun openGroupMemberApiKeyDialog() {
@@ -3417,9 +3466,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun openGroupMemberApiKeyDialogFor(memberId: String) {
         val member = groupMembers.firstOrNull { it.id == memberId } ?: return
         selectGroupMember(member.id)
-        apiKeyDialogTarget = ApiKeyDialogTarget.GroupMemberKey(member.id)
-        apiKeyDraft = ""
-        apiKeyDialogVisible = true
+        openApiKeyPicker(ApiKeyPickerTarget.Member(member.id))
     }
 
     fun clearGroupMemberApiKey() {
@@ -3427,19 +3474,80 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearGroupMemberApiKeyFor(memberId: String) {
-        updateGroupMemberApiKey(memberId, "")
+        updateGroupMemberSelectedKey(memberId, SelectedApiKey.None)
         chatError = null
     }
 
     fun openDirectorApiKeyDialog() {
-        apiKeyDialogTarget = ApiKeyDialogTarget.DirectorKey
+        openApiKeyPicker(ApiKeyPickerTarget.Director)
+    }
+
+    fun clearDirectorApiKey() {
+        updateActiveSession { session -> session.copy(directorSelectedKey = SelectedApiKey.None) }
+        chatError = null
+    }
+
+    fun openApiKeyPicker(target: ApiKeyPickerTarget) {
+        apiKeyPickerTarget = target
+        apiKeyPickerVisible = true
+    }
+
+    fun closeApiKeyPicker() {
+        apiKeyPickerVisible = false
+    }
+
+    fun selectVaultEntryForTarget(entryId: String) {
+        if (vaultEntries.none { it.id == entryId }) return
+        val selected = SelectedApiKey.VaultEntry(entryId)
+        when (val target = apiKeyPickerTarget) {
+            ApiKeyPickerTarget.Provider -> viewModelScope.launch {
+                apiKeyManager.setProviderSelectedKey(persona.vendor.id, selected)
+            }
+            ApiKeyPickerTarget.Director -> updateActiveSession {
+                it.copy(directorSelectedKey = selected)
+            }
+            is ApiKeyPickerTarget.Member -> updateGroupMemberSelectedKey(target.memberId, selected)
+        }
+        apiKeyPickerVisible = false
+        chatError = null
+    }
+
+    fun useCustomKeyForTarget() {
+        apiKeyDialogTarget = when (val target = apiKeyPickerTarget) {
+            ApiKeyPickerTarget.Provider -> ApiKeyDialogTarget.Provider
+            ApiKeyPickerTarget.Director -> ApiKeyDialogTarget.DirectorKey
+            is ApiKeyPickerTarget.Member -> ApiKeyDialogTarget.GroupMemberKey(target.memberId)
+        }
+        apiKeyPickerVisible = false
         apiKeyDraft = ""
         apiKeyDialogVisible = true
     }
 
-    fun clearDirectorApiKey() {
-        updateActiveSession { session -> session.copy(directorApiKey = "") }
-        chatError = null
+    fun openVaultScreen() {
+        appSettingsVisible = false
+        vaultScreenVisible = true
+    }
+
+    fun closeVaultScreen() {
+        vaultScreenVisible = false
+    }
+
+    fun addVaultEntry(name: String, key: String) {
+        viewModelScope.launch {
+            if (apiKeyManager.addVaultEntry(name, key) == null) {
+                chatError = if (vaultEntries.size >= ApiKeyManager.MAX_VAULT_ENTRIES) {
+                    "API Key Vault is limited to ${ApiKeyManager.MAX_VAULT_ENTRIES} entries."
+                } else "Name and key are required."
+            }
+        }
+    }
+
+    fun updateVaultEntry(id: String, name: String, key: String) {
+        viewModelScope.launch { apiKeyManager.updateVaultEntry(id, name, key) }
+    }
+
+    fun deleteVaultEntry(id: String) {
+        viewModelScope.launch { apiKeyManager.deleteVaultEntry(id) }
     }
 
     fun openTavilyApiKeyDialog() {
@@ -3500,7 +3608,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             when (apiKeyDialogTarget) {
-                ApiKeyDialogTarget.Provider -> apiKeyManager.replaceProviderKey(persona.vendor.id, apiKeyDraft)
+                ApiKeyDialogTarget.Provider -> apiKeyManager.setProviderSelectedKey(
+                    persona.vendor.id,
+                    SelectedApiKey.RawKey(apiKeyDraft.trim())
+                )
                 ApiKeyDialogTarget.GoogleAutoFill -> Unit // handled above before this coroutine
                 ApiKeyDialogTarget.Summarizer -> apiKeyManager.replaceSummarizerKey(apiKeyDraft)
                 ApiKeyDialogTarget.Tavily -> apiKeyManager.replaceTavilyKey(apiKeyDraft)
@@ -3510,11 +3621,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 ApiKeyDialogTarget.ElevenLabsVoiceId -> apiKeyManager.replaceElevenLabsVoiceId(apiKeyDraft)
                 ApiKeyDialogTarget.ElevenLabsModelId -> apiKeyManager.replaceElevenLabsModelId(apiKeyDraft)
                 ApiKeyDialogTarget.DirectorKey -> {
-                    updateActiveSession { session -> session.copy(directorApiKey = apiKeyDraft.trim()) }
+                    updateActiveSession {
+                        it.copy(directorSelectedKey = SelectedApiKey.RawKey(apiKeyDraft.trim()))
+                    }
                 }
                 is ApiKeyDialogTarget.GroupMemberKey -> {
                     val target = apiKeyDialogTarget as ApiKeyDialogTarget.GroupMemberKey
-                    updateGroupMemberApiKey(target.memberId, apiKeyDraft)
+                    updateGroupMemberSelectedKey(
+                        target.memberId,
+                        SelectedApiKey.RawKey(apiKeyDraft.trim())
+                    )
                 }
             }
             apiKeyDialogVisible = false
@@ -3797,27 +3913,71 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         updateActiveSession { session -> session.copy(bubbleGlassOverride = value) }
     }
 
-    fun showRoleplayOnboardingIfNeeded() {
-        if (roleplayUiModeEnabled && !roleplayOnboardingCompleted) roleplayOnboardingVisible = true
-    }
-
-    fun replayRoleplayOnboarding() {
-        roleplayOnboardingVisible = true
-    }
-
-    fun completeRoleplayOnboarding() {
-        roleplayOnboardingVisible = false
-        roleplayOnboardingCompleted = true
-        viewModelScope.launch(Dispatchers.IO) {
-            settingsDataStore.edit { it[roleplayOnboardingCompletedKey] = true }
+    fun showOnboardingIfNeeded() {
+        if (onboardingPreferencesLoaded && !onboardingCompleted) {
+            applyOnboardingEvent(OnboardingEvent.ShowIfNeeded)
         }
+    }
+
+    fun replayOnboarding() {
+        applyOnboardingEvent(OnboardingEvent.Replay)
+    }
+
+    fun advanceOnboarding() {
+        applyOnboardingEvent(OnboardingEvent.Advance)
+    }
+
+    fun retreatOnboarding() {
+        applyOnboardingEvent(OnboardingEvent.Retreat)
+    }
+
+    fun jumpToOnboardingStep(index: Int) {
+        applyOnboardingEvent(OnboardingEvent.Jump(index))
+    }
+
+    fun handleOnboardingAction(action: OnboardingAction) {
+        applyOnboardingEvent(OnboardingEvent.Action(action))
+    }
+
+    fun completeOnboarding() {
+        applyOnboardingEvent(OnboardingEvent.Complete)
+    }
+
+    private fun applyOnboardingEvent(event: OnboardingEvent) {
+        val transition = reduceOnboarding(
+            OnboardingUiState(
+                visible = onboardingVisible,
+                completed = onboardingCompleted,
+                stepIndex = onboardingStepIndex
+            ),
+            event
+        )
+        onboardingVisible = transition.state.visible
+        onboardingCompleted = transition.state.completed
+        onboardingStepIndex = transition.state.stepIndex
+        dispatchOnboardingEffects(
+            effects = transition.effects,
+            setRoleplayMode = ::updateRoleplayUiModeEnabled,
+            persistCompleted = {
+                viewModelScope.launch(Dispatchers.IO) {
+                    settingsDataStore.persistOnboardingCompleted()
+                }
+            },
+            openApiKey = ::openApiKeyDialog,
+            openCreateCharacter = ::openPersonaSheetForNewSession
+        )
+    }
+
+    fun openPersonaSheetForNewSession() {
+        createSession()
+        personaSheetVisible = true
     }
 
     fun updateRoleplayUiModeEnabled(value: Boolean) {
         roleplayUiModeEnabled = value
         viewModelScope.launch(Dispatchers.IO) {
             settingsDataStore.edit { preferences ->
-                preferences[roleplayUiModeEnabledKey] = value
+                preferences[ROLEPLAY_UI_MODE_ENABLED_KEY] = value
             }
         }
     }
@@ -3877,7 +4037,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             isAutoFilling = true
             // Auto-fill always runs on a Gemini model, so it needs a Google key
             // regardless of the active persona's vendor. Resolve it explicitly.
-            val apiKey = apiKeyManager.keyForProvider(ApiVendor.Google.id)
+            val apiKey = resolveProviderKey(ApiVendor.Google.id)
             if (apiKey.isNullOrBlank()) {
                 isAutoFilling = false
                 openGoogleApiKeyForAutoFill()
@@ -3905,7 +4065,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (userPrompt.isBlank()) return
         viewModelScope.launch {
             isAutoFilling = true
-            val apiKey = apiKeyManager.keyForProvider(ApiVendor.Google.id)
+            val apiKey = resolveProviderKey(ApiVendor.Google.id)
             if (apiKey.isNullOrBlank()) {
                 isAutoFilling = false
                 openGoogleApiKeyForAutoFill()
@@ -4283,20 +4443,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun updateGroupMemberApiKey(memberId: String, apiKey: String) {
+    private fun updateGroupMemberSelectedKey(memberId: String, selectedKey: SelectedApiKey) {
         updateActiveSession { session ->
             val members = session.normalizedMembers()
             val updatedMembers = members.map { member ->
-                if (member.id == memberId) member.copy(apiKey = apiKey.trim()) else member
+                if (member.id == memberId) member.copy(selectedKey = selectedKey) else member
             }
             session.copy(members = updatedMembers)
         }
     }
 
     private suspend fun resolvedApiKeyOrNull(member: GroupMember): String? {
-        return member.apiKey.trim().ifBlank {
-            apiKeyManager.keyForProvider(member.persona.vendor.id).orEmpty()
-        }.takeIf { it.isNotBlank() }
+        return if (member.selectedKey == SelectedApiKey.None) {
+            resolveProviderKey(member.persona.vendor.id)
+        } else {
+            resolveKey(member.selectedKey)
+        }
+    }
+
+    internal suspend fun resolveKey(selected: SelectedApiKey): String? =
+        resolveSelectedApiKey(selected, apiKeyManager::resolveVaultKey)
+
+    private suspend fun resolveProviderKey(providerId: String): String? =
+        resolveKey(apiKeyManager.providerSelectedKey(providerId))
+
+    private fun labelForSelectedKey(selected: SelectedApiKey): String? = when (selected) {
+        SelectedApiKey.None -> null
+        is SelectedApiKey.VaultEntry -> vaultEntries.firstOrNull { it.id == selected.id }?.name
+            ?: "Key deleted — tap to pick again"
+        is SelectedApiKey.RawKey -> selected.key.takeIf { it.isNotBlank() }?.let(apiKeyManager::mask)
     }
 
     private suspend fun resolvedApiKey(member: GroupMember): String {
@@ -4584,7 +4759,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val apiKey = if (summarizerUsesSeparateKey) {
             apiKeyManager.keyForSummarizer()
         } else {
-            apiKeyManager.keyForProvider(ApiVendor.Google.id)
+            resolveProviderKey(ApiVendor.Google.id)
         }?.takeIf { it.isNotBlank() } ?: return
 
         val chatLog = messagesToArchive.joinToString("\n") { message ->
@@ -5162,7 +5337,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun pickAnimeImageTags(request: String, preset: AnimeImagePreset): String {
         val fallbackTags = geminiChatService.fallbackRule34Tags(request)
-        val geminiKey = apiKeyManager.keyForProvider(ApiVendor.Google.id) ?: return fallbackTags
+        val geminiKey = resolveProviderKey(ApiVendor.Google.id) ?: return fallbackTags
         return geminiChatService.pickRule34Tags(
             apiKey = geminiKey,
             userRequest = request,
@@ -5445,6 +5620,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun isRateLimitError(throwable: Throwable): Boolean {
+        when (throwable) {
+            is DoroAutoExhaustedException -> return true
+            is ApiHttpException -> return throwable.statusCode == 429
+        }
         val message = throwable.message.orEmpty().lowercase(Locale.US)
         return message.contains("429") ||
             message.contains("resource_exhausted") ||
@@ -5453,6 +5632,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun friendlySendError(throwable: Throwable): String {
+        if (throwable is DoroAutoExhaustedException) {
+            return "DoroAutoMode: all Google models reached their quota for today."
+        }
         val raw = throwable.message.orEmpty()
         val normalized = raw.lowercase(Locale.US)
         val apiMessage = Regex("\"message\"\\s*:\\s*\"([^\"]+)\"")
@@ -6166,7 +6348,7 @@ private fun JSONObject.toHubCharacter(): HubCharacter {
 private fun GroupMember.localClone(newId: String): GroupMember {
     return copy(
         id = newId,
-        apiKey = apiKey
+        selectedKey = selectedKey
     )
 }
 
@@ -6198,7 +6380,7 @@ internal fun ChatSession.localClone(includeMessages: Boolean): ChatSession {
         persona = clonedPersona,
         members = clonedMembers,
         activeMemberId = clonedActiveId,
-        directorApiKey = directorApiKey,
+        directorSelectedKey = directorSelectedKey,
         archivedContext = if (includeMessages) archivedContext else "",
         archivedMessageIds = if (includeMessages) {
             archivedMessageIds.mapNotNullTo(linkedSetOf()) { messageIdMap[it] }
@@ -6218,7 +6400,7 @@ private fun ChatSession.freshImportCopy(): ChatSession {
     val importedMembers = normalizedMembers().map { member ->
         member.copy(
             id = memberIdMap.getValue(member.id),
-            apiKey = ""
+            selectedKey = SelectedApiKey.None
         )
     }
     val importedActiveId = memberIdMap[activeMemberId] ?: importedMembers.first().id
@@ -6238,7 +6420,7 @@ private fun ChatSession.freshImportCopy(): ChatSession {
         persona = importedPersona,
         members = importedMembers,
         activeMemberId = importedActiveId,
-        directorApiKey = "",
+        directorSelectedKey = SelectedApiKey.None,
         archivedMessageIds = archivedMessageIds.mapNotNullTo(linkedSetOf()) { messageIdMap[it] },
         preview = previewForRestored(importedMessages),
         updatedAt = currentTime(),
@@ -6312,7 +6494,10 @@ private fun ChatSession.toJson(includeApiKeys: Boolean = true): JSONObject {
         .put("persona", persona.toJson())
         .put("activeMemberId", activeMemberId)
         .put("groupResponseMode", groupResponseMode.name)
-        .put("directorApiKey", if (includeApiKeys) directorApiKey else "")
+        .put(
+            "directorApiKey",
+            if (includeApiKeys) directorSelectedKey.toStoredString() else ""
+        )
         .put("memoryEnabled", memoryEnabled)
         .put("storyLore", storyLore)
         .put("archivedContext", archivedContext)
@@ -6402,7 +6587,7 @@ private fun JSONObject.toChatSession(): ChatSession {
             storedMode = optString("groupResponseMode"),
             legacyRounds = optInt("responseRounds", 1)
         ),
-        directorApiKey = optString("directorApiKey", ""),
+        directorSelectedKey = selectedApiKeyFromStored(optString("directorApiKey", "")),
         memoryEnabled = if (has("memoryEnabled")) optBoolean("memoryEnabled", true) else true,
         storyLore = optString("storyLore").ifBlank { legacyStoryLore }.take(MAX_STORY_LORE_CHARS),
         archivedContext = optString("archivedContext"),
@@ -6455,14 +6640,14 @@ private fun GroupMember.toJson(includeApiKey: Boolean = true): JSONObject {
     return JSONObject()
         .put("id", id)
         .put("persona", persona.toJson())
-        .put("apiKey", if (includeApiKey) apiKey else "")
+        .put("apiKey", if (includeApiKey) selectedKey.toStoredString() else "")
 }
 
 private fun JSONObject.toGroupMember(): GroupMember {
     return GroupMember(
         id = optString("id").ifBlank { UUID.randomUUID().toString() },
         persona = optJSONObject("persona")?.toPersonaUiState() ?: PersonaUiState(),
-        apiKey = optString("apiKey", "")
+        selectedKey = selectedApiKeyFromStored(optString("apiKey", ""))
     )
 }
 
@@ -6519,7 +6704,7 @@ private fun JSONObject.toPersonaUiState(): PersonaUiState {
         beginnerLimits = optString("beginnerLimits"),
         instructionPrompt = restoredPrompt,
         vendor = vendor,
-        model = optString("model").ifBlank { vendor.defaultModel },
+        model = normalizeStoredModel(vendor, optString("model")),
         safetyLevel = SafetyLevel.entries.firstOrNull { it.name == optString("safetyLevel") } ?: SafetyLevel.None,
         thinkingEffort = GeminiThinkingEffort.entries.firstOrNull { it.name == optString("thinkingEffort") }
             ?: GeminiThinkingEffort.Low,

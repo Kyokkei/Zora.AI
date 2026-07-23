@@ -13,8 +13,8 @@ android {
         applicationId = "com.yozora.aichat"
         minSdk = 26
         targetSdk = 35
-        versionCode = 241
-        versionName = "2.2.7"
+        versionCode = 244
+        versionName = "2.2.8"
 
         val googleWebClientId = providers.gradleProperty("ZORA_GOOGLE_WEB_CLIENT_ID")
             .orElse(System.getenv("ZORA_GOOGLE_WEB_CLIENT_ID") ?: "CONFIGURE_ME")
@@ -31,13 +31,13 @@ android {
         create("zora") {
             dimension = "brand"
             resValue("string", "app_name", "Zora.AI")
-            resValue("string", "app_version_panel", "Zora.AI v2.2.7")
+            resValue("string", "app_version_panel", "Zora.AI v2.2.8")
         }
         create("slv") {
             dimension = "brand"
             applicationIdSuffix = ".slv"
             resValue("string", "app_name", "SanLoVerse (SLV)")
-            resValue("string", "app_version_panel", "SanLoVerse (SLV) v2.2.7")
+            resValue("string", "app_version_panel", "SanLoVerse (SLV) v2.2.8")
         }
     }
 
@@ -52,6 +52,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     buildTypes {
@@ -91,4 +92,5 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

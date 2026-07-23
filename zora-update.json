@@ -1,8 +1,8 @@
 {
-  "versionName": "2.2.7",
-  "versionCode": 241,
+  "versionName": "2.2.8",
+  "versionCode": 244,
   "apkAssetName": "app-zora-release.apk",
-  "sha256": "4a313fc213c3dcbde9426fa3fae762ac9ffdf3a74b90b8c33ed425cffee04c6b",
-  "sizeBytes": 27602403,
-  "downloadUrl": "https://github.com/Z0ra-AI/Zora.AI/releases/download/v2.2.7/app-zora-release.apk"
+  "sha256": "5ab0112962be3af1a8a7e05957325d3a3efaf7f4bf84269d8276a9f8108eabe9",
+  "sizeBytes": 27867772,
+  "downloadUrl": "https://github.com/Z0ra-AI/Zora.AI/releases/download/v2.2.8/app-zora-release.apk"
 }

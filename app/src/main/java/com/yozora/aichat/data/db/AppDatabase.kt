@@ -6,6 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import android.content.ContentValues
+import com.yozora.aichat.ui.chat.migrateSelectedApiKeyValue
 
 @Database(
     entities = [
@@ -14,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MessageEntity::class,
         TtsAudioCacheEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -45,7 +47,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_11_12,
                         MIGRATION_12_13,
                         MIGRATION_13_14,
-                        MIGRATION_14_15
+                        MIGRATION_14_15,
+                        MIGRATION_15_16
                     )
                     .build()
                     .also { instance = it }
@@ -200,6 +203,39 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `sessions` ADD COLUMN `headerAvatarRotation` REAL NOT NULL DEFAULT 0.0")
                 db.execSQL("ALTER TABLE `sessions` ADD COLUMN `headerAvatarTransformNormalized` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        internal val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                rewriteSelectedKeys(db, "sessions", "id", "directorApiKey")
+                rewriteSelectedKeys(db, "group_members", "id", "apiKey")
+            }
+        }
+
+        private fun rewriteSelectedKeys(
+            db: SupportSQLiteDatabase,
+            table: String,
+            idColumn: String,
+            keyColumn: String
+        ) {
+            db.query("SELECT `$idColumn`, `$keyColumn` FROM `$table`").use { cursor ->
+                val idIndex = cursor.getColumnIndexOrThrow(idColumn)
+                val keyIndex = cursor.getColumnIndexOrThrow(keyColumn)
+                while (cursor.moveToNext()) {
+                    val id = cursor.getString(idIndex)
+                    val oldValue = cursor.getString(keyIndex).orEmpty()
+                    val migrated = migrateSelectedApiKeyValue(oldValue)
+                    if (migrated != oldValue) {
+                        db.update(
+                            table,
+                            android.database.sqlite.SQLiteDatabase.CONFLICT_NONE,
+                            ContentValues().apply { put(keyColumn, migrated) },
+                            "`$idColumn` = ?",
+                            arrayOf(id)
+                        )
+                    }
+                }
             }
         }
     }
