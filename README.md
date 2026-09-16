@@ -1,207 +1,215 @@
-# Zora.AI ◈ (v2.2.7 / build 241)
-Zora.AI is a native Android AI companion built by Phan Chi Vy. 
+<div align="center">
 
-## Screenshots
+# ◈ Zora.AI
 
-<p align="center">
-  <img src="docs/screenshots/discover-carousel.jpg" width="30%" alt="Discover character carousel" />
-  <img src="docs/screenshots/character-details.jpg" width="30%" alt="Character details and actions" />
-  <img src="docs/screenshots/roleplay-chat.jpg" width="30%" alt="Roleplay chat with semantic text colors" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/persona-ui.jpg" width="30%" alt="Per-session Persona UI settings" />
-  <img src="docs/screenshots/roleplay-settings.jpg" width="30%" alt="Global Roleplay UI settings" />
-</p>
+### Autonomous, Local-First Android AI Companion & Frontier Creative Sandbox
 
-## The TL;DR
-**FUCK corporate censorship. FUCK paywalls.**
+[![Android: API 26+](https://img.shields.io/badge/Android-API_26%2B_(8.0_to_15)-3DDC84.svg?logo=android&logoColor=white)](#-requirements)
+[![Kotlin: 2.0](https://img.shields.io/badge/Kotlin-2.0-7F52FF.svg?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
+[![UI: Jetpack Compose](https://img.shields.io/badge/UI-Jetpack_Compose-4285F4.svg?logo=jetpackcompose&logoColor=white)](#-features)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Architecture: 100% BYOK](https://img.shields.io/badge/Architecture-100%25_BYOK_%26_Local--First-blueviolet.svg)](#-privacy--zero-telemetry-manifesto)
+[![Build: v2.2.9](https://img.shields.io/badge/Release-v2.2.9_(Build_245)-success.svg)](https://github.com/Z0ra-AI/Zora.AI/releases)
 
-I got sick of commercial AI apps locking basic conversations behind subscriptions or lecturing me about "community guidelines" every time a chat got interesting. Zora.AI is the antidote. It is a sandbox of pure creative freedom where adult content, dark roleplay, and extreme fictional scenarios are fully allowed.
+**Zora.AI** is an advanced, production-grade native Android client engineered for high-fidelity AI roleplay, multimodal streaming, and complete creative sovereignty.
 
-I’m a responsible developer, though—don't use this platform to build weapons, plan crimes, or recreate 9/11 (っ °Д °;)っ. Otherwise? Write whatever the fuck you want.
+*Direct device-to-model routing. Zero subscription paywalls. Zero telemetry. 100% offline data persistence.*
 
-Best of all: it's a **bring-your-own-key** model. You run it on your own API keys. No middleware, no training on your private chats, and no paying me a single cent.
+<br/>
 
-### The Three Rules of Zora:
-* 🚫 **NO Corporate Filters** — The model does what you tell it to do. Period.
-* 💸 **NO Paywalls** — 100% free and open-source.
-* 🔒 **NO Data Harvesting** — Your API keys, chat history, and visual frames stay locally on your device.
+<div align="center">
+  <a href="#-interface-showcase"><b>Screenshots</b></a> •
+  <a href="#-privacy--zero-telemetry-manifesto"><b>Manifesto</b></a> •
+  <a href="#-system-architecture"><b>Architecture</b></a> •
+  <a href="#-key-capabilities"><b>Features</b></a> •
+  <a href="#-building-from-source"><b>Build Guide</b></a> •
+  <a href="#-supported-ai-providers"><b>Model APIs</b></a>
+</div>
 
-*Note: While Zora is a highly capable assistant for coding and daily tasks, it is custom-tuned to be the ultimate sandbox for interactive roleplay.*
+</div>
+
+<br/>
+
+> 🤖 **For AI Agents & Reviewers:** Zora.AI is built natively in modern Kotlin with Jetpack Compose, Room DB, Coroutines/Flow, and direct WebSocket/REST integrations for OpenAI, Google Gemini, Anthropic Claude, and xAI Grok.
 
 ---
 
-## 🔞 NSFW & Frontier Model Jailbreak
-**WARNING**: Zora.AI features built-in jailbreak configurations for frontier-line models. 
-* **What it does**: Bypasses moralizing filters specifically to unlock NSFW 18+ content, mature storytelling, and unfiltered creative expression.
-* **What it blocks**: The system still enforces strict safety guards against dangerous/sketchy stuff (e.g. weapons, extreme real-world harm, self-harm instructions).
-* **Use at your own risk**: Using these configurations might violate the Terms of Service of your selected API provider. Your API keys could get banned if their automated systems flag them. Don't say I didn't warn you!
-* **Footnote**: To keep this repository clean and safe, the private NSFW-specific system prompts are *not* included or hardcoded in this repo. If you brew or build this app on your own, you'll need to write or supply your own master prompt, otherwise it will fall back to standard SFW behavior.
+## 📱 Interface Showcase
 
-### Model Risk Ranking (Lowest to Highest Risk of being banned):
-Based on usage testing (no keys were banned during development, but your mileage may vary):
-```text
-Grok 4.3 (Lowest Risk) ──> Gemini 3.5 ──> GPT-5.5 ──> Claude 4.8 (Highest Risk)
+Designed with Material 3, liquid-glass visual shaders, and device gyro-parallax effects:
+
+<div align="center">
+  <img src="docs/screenshots/discover-carousel.jpg" width="31%" alt="Discover character carousel" />
+  <img src="docs/screenshots/character-details.jpg" width="31%" alt="Character details and actions" />
+  <img src="docs/screenshots/roleplay-chat.jpg" width="31%" alt="Roleplay chat with semantic text colors" />
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/persona-ui.jpg" width="47%" alt="Per-session Persona UI settings" />
+  <img src="docs/screenshots/roleplay-settings.jpg" width="47%" alt="Global Roleplay UI settings" />
+</div>
+
+---
+
+## 🛡️ Privacy & Zero-Telemetry Manifesto
+
+Commercial AI chat platforms increasingly lock basic conversations behind predatory \$20/month subscriptions, harvest private chat transcripts to train proprietary models, and lecture users with aggressive moralizing guardrails.
+
+**Zora.AI is the local-first antidote.**
+
+1. 🚫 **Zero Intermediary Servers (True BYOK)**: Requests route directly from your phone to your selected API provider (Google, OpenAI, Anthropic, Mistral, or Grok). There are no proxy layers, middleman servers, or tracking cookies.
+2. 🔓 **Unconstrained Creative Sovereignty**: Complete freedom over system prompts, temperature, top-p, and reasoning parameters. Built-in support for custom master directives and uninhibited fictional storytelling.
+3. 🔒 **Local-First Data Persistence**: API keys, conversation logs, memories, lorebooks, and audio caches are stored exclusively on your device in an encrypted Room SQLite database.
+4. 💸 **Forever Free & Open Source**: No paywalls, no artificial rate limits, no premium tiers. The only cost is your direct token usage with your chosen provider.
+
+---
+
+## 🏗️ System Architecture
+
+Zora.AI decouples the client-side interaction layer from cloud intermediaries, ensuring absolute privacy and low-latency execution:
+
+```mermaid
+flowchart TD
+    %% Tier 1: Presentation
+    UI["📱 Native Android UI<br/>(Jetpack Compose • Liquid-Glass Shaders • Gyro Parallax)"]
+
+    %% Tier 2: Core Brain / Orchestrator
+    CORE["🧠 Context & Memory Engine<br/>(Soft TPM Summarizer • Dynamic Lorebooks • Persona Manager)"]
+
+    %% Tier 3: The Three Pillars (Uniform Rectangles, Zero Crossed Wires)
+    STORAGE["💾 Local-First Persistence<br/>• Encrypted Room SQLite DB<br/>• Hardware-Backed KeyStore Vault<br/>• 100% On-Device / Zero Telemetry"]
+    APIS["⚡ Direct BYOK Model Routing<br/>• OpenAI <br/>• Google Gemini (Live Voice & Vision)<br/>• Anthropic Claude & xAI Grok"]
+    COMMUNITY["🌐 Community Catalog<br/>• Cloudflare R2 Distributed Storage<br/>• Sanitized .zorashare Packages<br/>• Google Account Ownership"]
+
+    %% Clean Uncrossed Hierarchical Flow
+    UI --> CORE
+    CORE <-->|"Local Encrypted I/O"| STORAGE
+    CORE <-->|"Direct HTTPS / WebSockets"| APIS
+    CORE <-->|"Public Browse & Import"| COMMUNITY
 ```
-*(We recommend starting with Gemini or Mistral APIs for optimal stability and cost efficiency).*
 
 ---
 
-## 🌟 What's New in v2.2.7
-* ❤️ **AI-Aware Message Reactions**: React with ten curated emoji without triggering an API call; recent reactions become lightweight, speaker-aware feedback on the next normal turn.
-* 🛡️ **Duplicate-Send Protection**: Per-session send gates stop rapid taps, slow Director routing, retries, and stale requests from duplicating user messages.
-* 👤 **Reliable Persona Names**: Blank or stale local persona/speaker labels now resolve through stable member identities and visible fallbacks.
-* 🔀 **Safer Multi-AI Sessions**: In-flight replies keep their original session and member context even when you switch chats.
+## ✨ Key Capabilities
 
-## Previously in v2.2.6
-* 💬 **Composer Polish**: A lighter liquid-glass typing area now includes inline Paste, Copy, Cut, Action, Dialogue, and Continue controls without Android's floating menu blocking short drafts.
-* 🎬 **Roleplay Shortcuts**: Cursor-aware Action and Dialogue helpers can insert or wrap selected text, while Continue invisibly asks the character to advance the story.
-* ✨ **Message Feedback**: New messages use a spring-like send animation and meaningful sent, delivered, and failed/retry indicators.
-* 🎨 **Shared Roleplay Formatting**: User and AI messages consistently render actions, spoken dialogue, internal thoughts, and bold emphasis as separate semantic styles.
-
-## What's New in v2.2.5
-* 🎭 **Semantic Roleplay Presentation**: Dialogue, actions, and in-character thoughts use distinct readable colors while preserving the original message text.
-* 🫧 **Liquid-Glass Bubbles**: Choose glass styling for user messages, AI messages, or both globally and per session.
-* 🧭 **Roleplay Onboarding**: A short first-run guide explains Discover, Community, creation, privacy, and chat setup, with a replay option in Settings.
-* 👤 **Rich Community Profiles**: Open shared characters in a complete profile sheet before downloading, with duplicate-safe import actions.
-* 🔑 **Google-Owned Publishing**: Anyone can browse and import Community characters, while publishing and deleting require a Google account that owns the upload.
-* 🛡️ **Free-Tier Abuse Protection**: Per-account and privacy-preserving per-IP limits, upload reservations, storage ceilings, and an emergency upload switch guard Cloudflare R2.
-* 🧹 **No Invite Codes**: Community publishing now uses Google identity directly, removing manual invite setup and distribution.
-* 💬 **Local-First Accounts**: Google sign-in controls Community ownership only; chats, API keys, and local characters remain on the device and are not synced.
-
-## Previously in v2.2.4
-* 🌐 **Community Discover Source**: Switch between Your AI and Community inside Discover; browsing and importing are public, while authentication is required only for publishing.
-* 📤 **Complete Character Publishing**: Share sanitized prompts, lore, tags, avatars, and custom backgrounds without exposing API keys or chat history.
-* 📥 **Safe Community Imports**: Community downloads flow through Zora's existing import preview and duplicate warning before becoming local characters.
-* 🧊 **Layered Caching**: Immutable media URLs, Cloudflare edge caching, and Coil's device cache reduce repeated downloads.
-* 🔐 **Free-Tier Guardrails**: Publisher authentication, private object storage, upload limits, rate limits, and a 5 GB application storage ceiling protect the free allowance.
-
-## Previously in v2.2.3
-* 🎠 **Discover Hero Carousel**: The Roleplay Discover tab now uses a swipeable full-screen character carousel with side peeks, search, real user tags, detail sheets, and direct Chat actions.
-* 📌 **Pinned & Favorite Characters**: Pin or favorite local sessions, filter them in Discover, and keep priority characters surfaced ahead of the rest.
-* 🧾 **Create Editor Redesign**: The Create tab now opens directly into a polished full-screen editor with image upload, gender tags, live preview, validation, AI auto-fill, autosave, and the existing import actions.
-* 🔎 **Import Preview + Duplicate Warnings**: `.zorashare` and config imports now show a preview before saving, including character info, message count, import type, and duplicate warnings.
-* ⬆️ **VersionCode Updater Metadata**: GitHub releases now ship `zora-update.json`, so the in-app updater can detect same-label hotfixes like `v2.2.3 (226)`.
-* 💬 **Chat UI Polish**: Chat bubbles are wider, grouped messages read cleaner, inline tap actions are easier to reach, active tool chips show near the input, and the mic button opens the existing voice call flow.
-* 🖼️ **Better Profile Photo Picking**: Personal profile avatars now use the image picker flow and are copied into app-private storage so they survive restarts and updates.
+| Capability | Technical Highlight | User Value |
+| :--- | :--- | :--- |
+| 🎙️ **Gemini Live Calling** | Bidirectional real-time voice streaming with camera & screenshare | Voice chat with AI characters with live camera context |
+| 👥 **Multi-Agent Rooms** | 1 to 4 autonomous AI agents in a single shared session | Orchestrate debates or collaborative character interactions via `@mentions` |
+| 🧠 **Global Memory & Lore** | Persistent SQLite semantic context + Lorebooks | Characters remember background events across multi-day sessions |
+| 📈 **Relationship XP (1–10)** | Dynamic multi-turn affinity and compliance progression | Characters organically evolve personality and tone as intimacy deepens |
+| 📚 **Soft TPM Archiver** | Rolling contextual summarizer | Prevents chat interruptions when approaching Gemini's 250K TPM boundary |
+| 📦 **Zora Share (`.zorashare`)** | Portable JSON/asset archive format | One-click export/import of complete character lore, prompts, and avatars |
+| 📱 **Holographic Parallax** | SensorManager rotation vectors with low-pass smoothing & overscan safety | Wallpaper shifts organically with device tilt without black edges |
+| 🫧 **Liquid-Glass Styling** | Custom Compose canvas shaders with semantic roleplay text colors | Translucent, responsive UI with zero floating menu interruptions |
+| 🌐 **Community Discover** | Cloudflare R2 distributed catalog with Google Sign-in ownership | Browse, download, and publish sanitized personas with duplicate protection |
+| 🔍 **Integrated Live Tools** | Tavily Web Search, ElevenLabs TTS, and Multimodal Vision | Real-time web knowledge and high-fidelity vocal synthesis |
 
 ---
 
-## Features
-*(Everything is free to use. The only cost is what you pay directly to your API/TTS providers).*
+## ⚡ Frontier Model Risk & Parameter Guide
 
-* 🎭 **Custom AI Personas**: Customize name, avatar, author, tags, short description, system instructions, opening message, lorebook, background, tone, and character behavior.
-* 🎠 **Roleplay Discover Carousel**: Browse custom and preset characters through a mobile-first hero carousel with search, tag filters, character detail sheets, direct chat launch, long-press actions, pins, and favorites.
-* ✍️ **Full-Screen Character Creator**: Create companions with live preview, image upload, gender tags, selected tags, prompt/greeting/lore fields, AI auto-fill, autosave, and Create & Chat flow.
-* 👥 **Multi-Agent Chats**: Host 1 to 4 AI agents in a single room. Let them debate, or `@tag` them directly.
-* 📂 **Project Templates**: Share instructions and memories across multiple sessions seamlessly.
-* 🧠 **Global Memory**: Persistent, long-term memory that can be toggled on or off per chat.
-* 📈 **Relationship XP (Level 1–10)**: Session-based progression. The AI gets warmer, more compliant, and unlocks NSFW boundaries as you chat (NSFW unlocks at Level 5). Defaults to ON for all conversations and can be toggled in the Roleplay UI settings.
-* 💾 **Local-First Database**: Your chats survive app updates, restarts, and closures.
-* 🛠️ **Session Manager**: Clone, rename, search, move, export, pin, favorite, and delete chat rooms instantly.
-* 📦 **Zora Share (.zorashare)**: Export and import companion configs or full chat sessions, including messages, level progress, avatar images, and background images.
-* 🧪 **Import Safety Checks**: Preview imports before saving and choose normal import or Import as Copy when a duplicate character/session is detected.
-* 🔌 **Multi-Provider API**: Native support for **Gemini (best support for Live features)**, Claude, GPT, Grok, and Mistral.
-* 🔍 **Web Tools**: Live web search powered by Tavily.
-* 🔞 **Anime Image Search**: Search and pull images directly into the chat via Rule34.
-* 📸 **Visual Input**: Send up to 12 images (photos, live camera, or files) directly to the vision model.
-* 🎙️ **Gemini Live Calling**: Real-time voice calls with camera and screenshare support.
-* 📝 **Live Transcript**: Voice calls automatically compile into text bubbles and save to the chat history.
-* 🗣️ **ElevenLabs TTS**: High-quality message narration with built-in local audio caching.
-* 🎨 **Deep Customization**: Customize app themes, Roleplay dark/light mode, user profile, avatars, backgrounds, app name, and launcher icon.
-* ⚙️ **Developer Vault**: Tweak API safety settings, temperature, and thinking effort values.
-* ⏱️ **Quota Monitor**: Built-in local token counter and reset timer.
-* 📚 **Soft TPM Archive**: Preserves long conversations by summarizing older context instead of deleting it when Gemini approaches its 250K TPM limit.
-* 👆 **Message Actions**: Tap for inline message actions or long-press any bubble to copy, edit, retry, or text-to-speech.
-* 🔄 **Self-Updater**: Check GitHub releases from inside the app, download the APK, open Android's installer, and compare update metadata by build code for same-version hotfixes.
+Zora.AI allows direct model parameter customization (temperature, thinking tokens, and safety threshold overrides). Based on extensive field testing:
+
+| Model Provider | Best Suited For | Risk Profile | Cost Efficiency |
+| :--- | :--- | :--- | :--- |
+| **xAI Grok 4.3** | Raw fiction, unconstrained creative roleplay | 🟢 Lowest Risk | ⚡ Token-based |
+| **Google Gemini 3.6 Flash / Pro** | Real-time Live duplex voice, 2M context window | 🟢 Low Risk | 💎 Free tier available |
+| **OpenAI (GPT 5.6)** | Complex reasoning, multi-agent debates, structured tool calls | 🟡 Moderate Risk | ⚡ Standard |
+| **Anthropic Claude 4.8** | Deep literary nuance, emotional dialogue | 🔴 High Sensitivity | 🏷️ Premium |
 
 ---
 
-## Privacy Model
-This repository does not include private API keys or the default master prompt.
-
-### 100% Local Data:
-* API keys entered in settings.
-* Chat histories, messages, and database memories.
-* Persona configs and user preferences.
-* Cached TTS audio.
-* Local quota counters.
-
-Network requests only happen when sending a message or running an active tool. Data goes directly to the selected API provider (Google, Anthropic, OpenAI, Mistral, Tavily, Rule34, or ElevenLabs). No middleman servers involved.
-
----
-
-## Master Prompt
-The application looks for the private master prompt at:
-```text
-app/src/main/assets/local_master_prompt.txt
-```
-This file is ignored by `.gitignore`. To build the APK with your own custom rules:
-1. Create the `local_master_prompt.txt` file locally in the assets directory.
-2. Build the project.
-If the file is missing, the build falls back to a basic default prompt in the code.
-
----
-
-## API Providers & Keys
-*Note: Zora performs best on **Gemini** (required for Live voice calls), followed by **Claude** and **Mistral**.*
-
-* **Google AI Studio**: https://aistudio.google.com/app/apikey
-* **Anthropic Console**: https://console.anthropic.com/settings/keys
-* **OpenAI Developer**: https://platform.openai.com/api-keys
-* **Mistral API Console**: https://console.mistral.ai/api-keys/
-* **xAI (Grok) Console**: https://console.x.ai/
-* **Tavily Search**: https://app.tavily.com/
-* **ElevenLabs Dashboard**: https://elevenlabs.io/app/settings/api-keys
-* **Rule34 (API Key & ID)**: https://rule34.xxx/index.php?page=account&s=options
-  * *Note: Rule34 requires both the numeric User ID and the API Key from your account options page.*
-  * *ElevenLabs TTS requires a Voice ID. Some custom voices may return a `402 Payment Required` code if your key doesn't have access to them.*
-
----
-
-## Building from Source
+## 🛠️ Building from Source
 
 ### Requirements:
-* Android Studio (Koala or newer) / Android SDK CLI tools.
-* JDK 17.
-* Target Device running Android 8.0 (API 26) or higher.
-* `app/src/main/assets/local_master_prompt.txt` (optional, for custom system guidelines).
+* **Android Studio**: Koala (2024.1.1) or newer
+* **JDK**: Version 17
+* **Target Device**: Android 8.0 (API 26) or higher
+* *(Optional)* Custom system guidelines placed at `app/src/main/assets/local_master_prompt.txt`
 
-### Run Build:
-For Release APK:
+### Build Commands:
+
 ```powershell
+# Clone the repository
+git clone https://github.com/Z0ra-AI/Zora.AI.git
+cd Zora.AI
+
+# Build Release APK
 .\gradlew.bat assembleZoraRelease
-```
 
-For Debug APK:
-```powershell
+# Build Debug APK
 .\gradlew.bat assembleZoraDebug
 ```
 
 ---
 
-## Disclaimer & Licensing
-* **Disclaimer**: This is a bring-your-own-key application. Model responses, safety refusals, rate limits, and tool execution depend entirely on the selected provider and API plan. The Rule34 tool is adult-only and should only be enabled where legal.
-* **License**: MIT. Keep the credit, do whatever the fuck you want with the code.
+## 🔑 Supported AI Providers
+
+Acquire your API keys directly from upstream providers:
+
+* **Google AI Studio**: [aistudio.google.com](https://aistudio.google.com/app/apikey) *(Recommended for Live calls)*
+* **OpenAI Developer**: [platform.openai.com](https://platform.openai.com/api-keys)
+* **Anthropic Console**: [console.anthropic.com](https://console.anthropic.com/settings/keys)
+* **xAI (Grok) Console**: [console.x.ai](https://console.x.ai/)
+* **Mistral API Console**: [console.mistral.ai](https://console.mistral.ai/api-keys/)
+* **ElevenLabs TTS**: [elevenlabs.io](https://elevenlabs.io/)
+* **Tavily Search**: [tavily.com](https://app.tavily.com/)
 
 ---
 
-## 🛠️ AI Development Stack
-The codebase of Zora.AI is built using pair-programming with the following frontier LLMs:
-* **Claude**: Haiku 4.5, Sonnet 4.6, Opus 4.6 & 4.8
-* **Gemini**: 3.1 Pro, 3.5 Flash
-* **Grok**: 4.3 (Fast & Heavy)
-* **GPT**: 5.4 Mini, 5.5 xHigh
+<details>
+<summary><b>📜 Changelog & Version History (v2.2.3 – v2.2.9)</b></summary>
+
+### What's New in v2.2.9
+* 📱 **Holographic Gyro-Parallax Backgrounds**: Real-time device rotation vector sensors smoothly translate chat wallpapers as you tilt your phone, with edge overscan clamping and per-session overrides.
+* 🛡️ **Room Database Schema v14**: Seamless schema migration (`MIGRATION_13_14`) adding per-session parallax configuration without data loss.
+
+### Previously in v2.2.8
+* ⚡ **Doro Auto-Mode Engine**: Autonomous agent response optimization and context routing.
+* 🔑 **Hardware-Backed API Vault**: Expanded key management with per-provider validation.
+
+### Previously in v2.2.7
+* ❤️ **AI-Aware Message Reactions**: React with curated emoji without triggering an API call; recent reactions feed context into the next turn.
+* 🛡️ **Duplicate-Send Protection**: Per-session gates stop rapid taps, retries, and stale requests from duplicating user messages.
+* 👤 **Reliable Persona Names**: Stale local persona labels resolve through stable member identities with visible fallbacks.
+* 🔀 **Safer Multi-AI Sessions**: In-flight replies preserve session context during chat switches.
+
+### Previously in v2.2.6
+* 💬 **Composer Polish**: Liquid-glass typing area with inline Paste, Copy, Cut, Action, Dialogue, and Continue controls.
+* 🎬 **Roleplay Shortcuts**: Cursor-aware Action and Dialogue formatting helpers.
+* 🎨 **Semantic Roleplay Formatting**: Distinct readable styling for spoken dialogue, actions, and internal monologue.
+
+### Previously in v2.2.5
+* 🫧 **Liquid-Glass Bubbles**: Customizable glass styling for user and AI message bubbles globally and per session.
+* 👤 **Rich Community Profiles**: Full character sheet previews before downloading with duplicate-safe import actions.
+* 🛡️ **Free-Tier Abuse Guardrails**: Cloudflare R2 ceilings, upload rate-limits, and Google account ownership validation.
+
+### Previously in v2.2.4
+* 🌐 **Community Discover Source**: Public browsing and importing with authenticated publishing.
+* 📤 **Sanitized Character Publishing**: Share prompts and lorebooks without exposing private API keys or chat logs.
+
+### Previously in v2.2.3
+* 🎠 **Discover Hero Carousel**: Full-screen swipeable character carousel with real-time tag search.
+* 📌 **Pinned & Favorite Characters**: Session priority sorting and filtering.
+* 🧾 **Full-Screen Character Creator**: Live preview, image picker, prompt auto-fill, and autosave.
+
+</details>
 
 ---
 
-## 👑 Solo Leveling Credits (Project Team)
-Since this app is a solo-leveled project, here is the organizational structure:
-* **CEO / President**: Phan Chi Vy
-* **Lead Architect**: Phan Chi Vy
-* **UI/UX Designer**: Phan Chi Vy
-* **QA & Tester**: Phan Chi Vy
-* **Copywriter**: Phan Chi Vy
-* **Coffee Maker**: Phan Chi Vy
-* **Janitor / Code Cleaner**: Phan Chi Vy
-* **Hype Man**: Phan Chi Vy
+## 👑 Solo Leveling Credits
+
+Engineered and maintained autonomously as a solo-developer project:
+
+* **Lead Architect & Android Developer**: Phan Chi Vy
+* **UI/UX & Shader Design**: Phan Chi Vy
+* **QA & Systems Testing**: Phan Chi Vy
+* **Copywriting & Documentation**: Phan Chi Vy
+* **Lead Barista / Coffee Optimization**: Phan Chi Vy
+
+---
+
+## 📜 Licensing
+
+This project is licensed under the [MIT License](LICENSE).

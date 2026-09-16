@@ -253,6 +253,7 @@ import com.yozora.aichat.ui.chat.visiblePersonaName
 import com.yozora.aichat.ui.chat.visibleSpeakerName
 import com.yozora.aichat.ui.chat.TtsPreviewState
 import com.yozora.aichat.ui.chat.VoiceCallCameraFacing
+import com.yozora.aichat.ui.chat.rememberGyroOffset
 import com.yozora.aichat.ui.theme.AppAccent
 import com.yozora.aichat.ui.theme.AppAccentDim
 import com.yozora.aichat.ui.theme.AppAccentSoft
@@ -555,6 +556,7 @@ fun CompanionChatApp(
                     sessionHeaderAvatarRotation = viewModel.sessionHeaderAvatarRotation,
                     sessionHeaderAvatarTransformNormalized = viewModel.sessionHeaderAvatarTransformNormalized,
                     background = viewModel.background,
+                    gyroParallaxEnabled = viewModel.gyroParallaxActive,
                     bubbleGlassMode = viewModel.effectiveBubbleGlassMode,
                     roleplayLightMode = viewModel.roleplayLightModeEnabled,
                     messages = viewModel.messages,
@@ -624,6 +626,7 @@ fun CompanionChatApp(
                 sessionHeaderAvatarRotation = viewModel.sessionHeaderAvatarRotation,
                 sessionHeaderAvatarTransformNormalized = viewModel.sessionHeaderAvatarTransformNormalized,
                 background = viewModel.background,
+                gyroParallaxEnabled = viewModel.gyroParallaxActive,
                 bubbleGlassMode = BubbleGlassMode.Off,
                 roleplayLightMode = false,
                 messages = viewModel.messages,
@@ -795,6 +798,8 @@ fun CompanionChatApp(
                 levelSystemEnabled = viewModel.levelSystemEnabled,
                 levelXp = viewModel.levelXp,
                 background = viewModel.background,
+                gyroParallaxOverride = viewModel.gyroParallaxOverride,
+                gyroParallaxActive = viewModel.gyroParallaxActive,
                 bubbleGlassOverride = viewModel.sessionBubbleGlassOverride,
                 moreOptions = viewModel.morePersonaOptions,
                 activeApiKeyLabel = viewModel.activeApiKeyLabel,
@@ -839,6 +844,7 @@ fun CompanionChatApp(
                 onAvatarCrop = viewModel::setAvatarCrop,
                 onSessionHeaderAvatarCrop = viewModel::setSessionHeaderAvatarCrop,
                 onBackgroundChange = viewModel::updateBackground,
+                onGyroParallaxOverrideChange = viewModel::updateGyroParallaxOverride,
                 onBubbleGlassOverrideChange = viewModel::updateSessionBubbleGlassOverride,
                 onCustomBackgroundChange = viewModel::updateCustomBackground,
                 onToggleMore = viewModel::toggleMorePersonaOptions,
@@ -924,12 +930,14 @@ fun CompanionChatApp(
             selectedName = viewModel.appNameChoice,
             selectedIcon = viewModel.appIconChoice,
             nsfwModeEnabled = viewModel.nsfwModeEnabled,
+            gyroParallaxGlobalEnabled = viewModel.gyroParallaxGlobalEnabled,
             roleplayUiModeEnabled = viewModel.roleplayUiModeEnabled,
             useLightColors = viewModel.roleplayLightModeEnabled,
             languageCode = viewModel.languageCode,
             onNameChange = viewModel::updateAppName,
             onIconChange = viewModel::updateAppIcon,
             onNsfwModeChange = viewModel::updateNsfwModeEnabled,
+            onGyroParallaxGlobalChange = viewModel::updateGyroParallaxGlobal,
             onRoleplayUiModeChange = viewModel::updateRoleplayUiModeEnabled,
             onLanguageChange = viewModel::updateLanguage,
             onOpenApiKeyVault = viewModel::openVaultScreen,
@@ -1044,6 +1052,7 @@ private fun ChatScreen(
     sessionHeaderAvatarRotation: Float,
     sessionHeaderAvatarTransformNormalized: Boolean,
     background: ChatBackground,
+    gyroParallaxEnabled: Boolean,
     bubbleGlassMode: BubbleGlassMode,
     roleplayLightMode: Boolean,
     messages: List<ChatMessage>,
@@ -1179,7 +1188,10 @@ private fun ChatScreen(
             .fillMaxSize()
             .background(AppBackground)
     ) {
-        ChatBackgroundLayer(background = background)
+        ChatBackgroundLayer(
+            background = background,
+            gyroEnabled = gyroParallaxEnabled
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -2104,8 +2116,37 @@ private fun formatCallDuration(seconds: Long): String {
     return String.format(Locale.US, "%02d:%02d", minutes, remainder)
 }
 
+private const val PARALLAX_OVER_SCALE = 1.10f
+private const val PARALLAX_HORIZONTAL_TRAVEL_CAP_PX = 56f
+private const val PARALLAX_VERTICAL_TRAVEL_CAP_PX = 40f
+private const val PARALLAX_EDGE_SAFETY_FACTOR = 0.87f
+private const val HOLOGRAPHIC_RAINBOW_ALPHA = 0.10f
+
+private val HolographicRainbowColors = listOf(
+    Color(0xFFFF3D71).copy(alpha = HOLOGRAPHIC_RAINBOW_ALPHA),
+    Color(0xFFFF9F43).copy(alpha = HOLOGRAPHIC_RAINBOW_ALPHA),
+    Color(0xFFFFE66D).copy(alpha = HOLOGRAPHIC_RAINBOW_ALPHA),
+    Color(0xFF52E38C).copy(alpha = HOLOGRAPHIC_RAINBOW_ALPHA),
+    Color(0xFF50D9FF).copy(alpha = HOLOGRAPHIC_RAINBOW_ALPHA),
+    Color(0xFF5C7CFF).copy(alpha = HOLOGRAPHIC_RAINBOW_ALPHA),
+    Color(0xFFB36BFF).copy(alpha = HOLOGRAPHIC_RAINBOW_ALPHA)
+)
+
+private fun ChatBackground.supportsParallax(): Boolean = when (this) {
+    ChatBackground.PresetBlack,
+    ChatBackground.PresetWhite,
+    is ChatBackground.CustomImage -> true
+    else -> false
+}
+
 @Composable
-private fun ChatBackgroundLayer(background: ChatBackground) {
+private fun ChatBackgroundLayer(
+    background: ChatBackground,
+    gyroEnabled: Boolean = false
+) {
+    val parallaxEnabled = gyroEnabled && background.supportsParallax()
+    val gyroOffset by rememberGyroOffset(enabled = parallaxEnabled)
+
     when (background) {
         ChatBackground.DarkMode -> Box(
             modifier = Modifier
@@ -2139,17 +2180,23 @@ private fun ChatBackgroundLayer(background: ChatBackground) {
 
         ChatBackground.PresetBlack -> BackgroundImage(
             painter = painterResource(id = R.drawable.background_black),
-            darkScrim = 0.24f
+            darkScrim = 0.24f,
+            gyroOffset = gyroOffset,
+            parallaxEnabled = parallaxEnabled
         )
 
         ChatBackground.PresetWhite -> BackgroundImage(
             painter = painterResource(id = R.drawable.background_white),
-            darkScrim = 0.32f
+            darkScrim = 0.32f,
+            gyroOffset = gyroOffset,
+            parallaxEnabled = parallaxEnabled
         )
 
         is ChatBackground.CustomImage -> BackgroundImage(
             painter = rememberAsyncImagePainter(background.uri),
-            darkScrim = 0.42f
+            darkScrim = 0.42f,
+            gyroOffset = gyroOffset,
+            parallaxEnabled = parallaxEnabled
         )
     }
 }
@@ -2157,20 +2204,69 @@ private fun ChatBackgroundLayer(background: ChatBackground) {
 @Composable
 private fun BackgroundImage(
     painter: androidx.compose.ui.graphics.painter.Painter,
-    darkScrim: Float
+    darkScrim: Float,
+    gyroOffset: Offset = Offset.Zero,
+    parallaxEnabled: Boolean = false
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        Image(
-            painter = painter,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = darkScrim))
-        )
+                .then(
+                    if (parallaxEnabled) {
+                        Modifier.graphicsLayer {
+                            val overScale = PARALLAX_OVER_SCALE
+                            scaleX = overScale
+                            scaleY = overScale
+                            val horizontalTravel = minOf(
+                                PARALLAX_HORIZONTAL_TRAVEL_CAP_PX,
+                                size.width * (overScale - 1f) * 0.5f
+                            ) * PARALLAX_EDGE_SAFETY_FACTOR
+                            val verticalTravel = minOf(
+                                PARALLAX_VERTICAL_TRAVEL_CAP_PX,
+                                size.height * (overScale - 1f) * 0.5f
+                            ) * PARALLAX_EDGE_SAFETY_FACTOR
+                            translationX = gyroOffset.x * horizontalTravel
+                            translationY = gyroOffset.y * verticalTravel
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
+        ) {
+            Image(
+                painter = painter,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = darkScrim))
+            )
+        }
+        if (parallaxEnabled) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val angleRadians = Math.toRadians((gyroOffset.x * 60f).toDouble()).toFloat()
+                val halfLength = kotlin.math.sqrt(size.width * size.width + size.height * size.height)
+                val direction = Offset(
+                    kotlin.math.cos(angleRadians),
+                    kotlin.math.sin(angleRadians)
+                )
+                val center = Offset(
+                    size.width * 0.5f + gyroOffset.y * size.width * 0.08f,
+                    size.height * 0.5f
+                )
+                drawRect(
+                    brush = Brush.linearGradient(
+                        colors = HolographicRainbowColors,
+                        start = center - direction * halfLength,
+                        end = center + direction * halfLength
+                    )
+                )
+            }
+        }
     }
 }
 
@@ -5643,6 +5739,8 @@ private fun PersonaSettingsSheet(
     levelSystemEnabled: Boolean,
     levelXp: Int,
     background: ChatBackground,
+    gyroParallaxOverride: Boolean?,
+    gyroParallaxActive: Boolean,
     bubbleGlassOverride: BubbleGlassMode?,
     moreOptions: Boolean,
     activeApiKeyLabel: String?,
@@ -5687,6 +5785,7 @@ private fun PersonaSettingsSheet(
     onAvatarCrop: (android.net.Uri, Float, Float, Float, Float) -> Unit,
     onSessionHeaderAvatarCrop: (android.net.Uri, Float, Float, Float, Float) -> Unit,
     onBackgroundChange: (ChatBackground) -> Unit,
+    onGyroParallaxOverrideChange: (Boolean?) -> Unit,
     onBubbleGlassOverrideChange: (BubbleGlassMode?) -> Unit,
     onCustomBackgroundChange: (android.net.Uri?) -> Unit,
     onToggleMore: () -> Unit,
@@ -6000,7 +6099,11 @@ private fun PersonaSettingsSheet(
                     BackgroundOptions(
                         selected = background,
                         onBackgroundChange = onBackgroundChange,
-                        onPickCustomBackground = { backgroundPicker.launch(arrayOf("image/*")) }
+                        onPickCustomBackground = { backgroundPicker.launch(arrayOf("image/*")) },
+                        showParallaxControls = true,
+                        gyroParallaxOverride = gyroParallaxOverride,
+                        gyroParallaxActive = gyroParallaxActive,
+                        onGyroParallaxOverrideChange = onGyroParallaxOverrideChange
                     )
                 }
 
@@ -7147,7 +7250,11 @@ private fun MoreOptions(
 private fun BackgroundOptions(
     selected: ChatBackground,
     onBackgroundChange: (ChatBackground) -> Unit,
-    onPickCustomBackground: () -> Unit
+    onPickCustomBackground: () -> Unit,
+    showParallaxControls: Boolean = false,
+    gyroParallaxOverride: Boolean? = null,
+    gyroParallaxActive: Boolean = false,
+    onGyroParallaxOverrideChange: (Boolean?) -> Unit = {}
 ) {
     Text(
         text = "Background",
@@ -7181,6 +7288,44 @@ private fun BackgroundOptions(
                 label = "Upload photo",
                 selected = selected is ChatBackground.CustomImage,
                 onClick = onPickCustomBackground
+            )
+        }
+    }
+
+    if (showParallaxControls) {
+        Text(
+            text = "Holographic parallax",
+            color = AppTextPrimary,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(top = 18.dp, bottom = 4.dp)
+        )
+        Text(
+            text = when (gyroParallaxOverride) {
+                null -> "Use global setting · currently ${if (gyroParallaxActive) "on" else "off"}"
+                true -> "Forced on for this session."
+                false -> "Forced off for this session."
+            },
+            color = AppTextSecondary,
+            style = MaterialTheme.typography.bodySmall
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(top = 10.dp)
+        ) {
+            BackgroundChoice(
+                label = "Use global",
+                selected = gyroParallaxOverride == null,
+                onClick = { onGyroParallaxOverrideChange(null) }
+            )
+            BackgroundChoice(
+                label = "On",
+                selected = gyroParallaxOverride == true,
+                onClick = { onGyroParallaxOverrideChange(true) }
+            )
+            BackgroundChoice(
+                label = "Off",
+                selected = gyroParallaxOverride == false,
+                onClick = { onGyroParallaxOverrideChange(false) }
             )
         }
     }
@@ -7621,12 +7766,14 @@ private fun AppSettingsDialog(
     selectedName: AppNameChoice,
     selectedIcon: AppIconChoice,
     nsfwModeEnabled: Boolean,
+    gyroParallaxGlobalEnabled: Boolean,
     roleplayUiModeEnabled: Boolean,
     useLightColors: Boolean,
     languageCode: String,
     onNameChange: (AppNameChoice) -> Unit,
     onIconChange: (AppIconChoice) -> Unit,
     onNsfwModeChange: (Boolean) -> Unit,
+    onGyroParallaxGlobalChange: (Boolean) -> Unit,
     onRoleplayUiModeChange: (Boolean) -> Unit,
     onLanguageChange: (String) -> Unit,
     onOpenApiKeyVault: () -> Unit,
@@ -7747,6 +7894,30 @@ private fun AppSettingsDialog(
                     Switch(
                         checked = nsfwModeEnabled,
                         onCheckedChange = onNsfwModeChange
+                    )
+                }
+                Spacer(modifier = Modifier.height(18.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Holographic backgrounds",
+                            color = textPrimaryColor,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Text(
+                            text = if (gyroParallaxGlobalEnabled) {
+                                "Tilting your phone shifts the chat background."
+                            } else {
+                                "Disabled for all sessions unless overridden."
+                            },
+                            color = textSecondaryColor,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(top = 3.dp)
+                        )
+                    }
+                    Switch(
+                        checked = gyroParallaxGlobalEnabled,
+                        onCheckedChange = onGyroParallaxGlobalChange
                     )
                 }
                 Spacer(modifier = Modifier.height(18.dp))

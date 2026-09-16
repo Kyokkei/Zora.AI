@@ -81,6 +81,7 @@ class ChatRepository private constructor(
                 bubbleGlassOverride = sessionEntity.bubbleGlassOverride?.let { stored ->
                     BubbleGlassMode.entries.firstOrNull { it.name == stored }
                 },
+                gyroParallaxEnabled = sessionEntity.gyroParallaxEnabled,
                 messages = dao.messagesForSession(sessionEntity.id).map { it.toChatMessage() }
             )
         }
@@ -120,7 +121,8 @@ class ChatRepository private constructor(
                 draft = session.draft,
                 isFavorite = session.isFavorite,
                 pinnedAtMillis = session.pinnedAtMillis,
-                bubbleGlassOverride = session.bubbleGlassOverride?.name
+                bubbleGlassOverride = session.bubbleGlassOverride?.name,
+                gyroParallaxEnabled = session.gyroParallaxEnabled
             )
         }
         val memberEntities = sessions.flatMap { session ->

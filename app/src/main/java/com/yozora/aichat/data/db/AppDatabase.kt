@@ -16,7 +16,7 @@ import com.yozora.aichat.ui.chat.migrateSelectedApiKeyValue
         MessageEntity::class,
         TtsAudioCacheEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -48,7 +48,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_12_13,
                         MIGRATION_13_14,
                         MIGRATION_14_15,
-                        MIGRATION_15_16
+                        MIGRATION_15_16,
+                        MIGRATION_16_17
                     )
                     .build()
                     .also { instance = it }
@@ -210,6 +211,12 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 rewriteSelectedKeys(db, "sessions", "id", "directorApiKey")
                 rewriteSelectedKeys(db, "group_members", "id", "apiKey")
+            }
+        }
+
+        internal val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `sessions` ADD COLUMN `gyroParallaxEnabled` INTEGER")
             }
         }
 

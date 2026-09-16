@@ -45,7 +45,8 @@ data class ChatSessionEntity(
     val draft: String = "",
     val isFavorite: Boolean = false,
     val pinnedAtMillis: Long? = null,
-    val bubbleGlassOverride: String? = null
+    val bubbleGlassOverride: String? = null,
+    val gyroParallaxEnabled: Boolean? = null
 )
 
 @Entity(

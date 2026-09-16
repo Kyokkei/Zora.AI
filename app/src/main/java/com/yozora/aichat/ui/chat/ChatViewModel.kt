@@ -424,6 +424,7 @@ data class ChatSession(
     val isFavorite: Boolean = false,
     val pinnedAtMillis: Long? = null,
     val bubbleGlassOverride: BubbleGlassMode? = null,
+    val gyroParallaxEnabled: Boolean? = null,
     val messages: List<ChatMessage> = emptyList()
 )
 
@@ -631,6 +632,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val hubTokenKey = stringPreferencesKey("zora_hub_token_v1")
     private val hubUsernameKey = stringPreferencesKey("zora_hub_username_v1")
     private val nsfwModeEnabledKey = booleanPreferencesKey("nsfw_mode_enabled_v1")
+    private val gyroParallaxEnabledKey = booleanPreferencesKey("gyro_parallax_enabled_v1")
     private val summarizerSeparateKeyKey = booleanPreferencesKey("summarizer_use_separate_key")
     private val roleplayLightModeKey = booleanPreferencesKey("roleplay_light_mode_enabled_v1")
     private val roleplayBubbleGlassModeKey = stringPreferencesKey("roleplay_bubble_glass_mode_v1")
@@ -812,6 +814,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     var nsfwModeEnabled by mutableStateOf(true)
         private set
 
+    var gyroParallaxGlobalEnabled by mutableStateOf(false)
+        private set
+
     var roleplayUiModeEnabled by mutableStateOf(DEFAULT_ROLEPLAY_UI_ENABLED)
         private set
 
@@ -914,6 +919,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val background: ChatBackground
         get() = activeSession.background
 
+    val gyroParallaxOverride: Boolean?
+        get() = activeSession.gyroParallaxEnabled
+
+    val gyroParallaxActive: Boolean
+        get() = gyroParallaxOverride ?: gyroParallaxGlobalEnabled
+
     val effectiveBubbleGlassMode: BubbleGlassMode
         get() = activeSession.bubbleGlassOverride ?: roleplayBubbleGlassMode
 
@@ -1010,6 +1021,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val restoredNsfw = preferences[nsfwModeEnabledKey] ?: true
                 nsfwModeEnabled = restoredNsfw
                 nsfwModeEnabledValue = restoredNsfw
+                gyroParallaxGlobalEnabled = preferences[gyroParallaxEnabledKey] ?: false
                 summarizerUsesSeparateKey = preferences[summarizerSeparateKeyKey] ?: false
                 roleplayUiModeEnabled = preferences.roleplayUiModeEnabled()
                 roleplayLightModeEnabled = preferences[roleplayLightModeKey] ?: false
@@ -2986,6 +2998,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         )
         root.put("storyLore", session.storyLore)
         root.put("backgroundJson", session.background.toJson().toString())
+        root.put("gyroParallaxEnabled", session.gyroParallaxEnabled ?: JSONObject.NULL)
 
         val avatarUri = session.persona.avatarUri ?: session.headerAvatarUri
         if (avatarUri != null) {
@@ -3330,6 +3343,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val instructionPrompt = root.optString("instructionPrompt")
         val storyLore = root.optString("storyLore")
         val backgroundJson = root.optString("backgroundJson")
+        val gyroParallaxEnabled = root.optNullableBoolean("gyroParallaxEnabled")
         val traitsJson = root.optJSONArray("traits")
         val traits = buildList {
             if (traitsJson != null) {
@@ -3398,6 +3412,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             headerAvatarTransformNormalized = avatarTransformNormalized,
             storyLore = storyLore,
             background = importedBackground,
+            gyroParallaxEnabled = gyroParallaxEnabled,
             preview = "Imported configuration"
         )
     }
@@ -3888,6 +3903,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             settingsDataStore.edit { preferences ->
                 preferences[nsfwModeEnabledKey] = value
             }
+        }
+    }
+
+    fun updateGyroParallaxGlobal(value: Boolean) {
+        gyroParallaxGlobalEnabled = value
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsDataStore.edit { preferences ->
+                preferences[gyroParallaxEnabledKey] = value
+            }
+        }
+    }
+
+    fun updateGyroParallaxOverride(value: Boolean?) {
+        updateActiveSession { session ->
+            session.copy(gyroParallaxEnabled = value)
         }
     }
 
@@ -6521,6 +6551,7 @@ private fun ChatSession.toJson(includeApiKeys: Boolean = true): JSONObject {
         .put("isFavorite", isFavorite)
         .put("pinnedAtMillis", pinnedAtMillis ?: JSONObject.NULL)
         .put("bubbleGlassOverride", bubbleGlassOverride?.name ?: JSONObject.NULL)
+        .put("gyroParallaxEnabled", gyroParallaxEnabled ?: JSONObject.NULL)
         .put(
             "messages",
             JSONArray().apply {
@@ -6604,6 +6635,7 @@ private fun JSONObject.toChatSession(): ChatSession {
         bubbleGlassOverride = optNullableString("bubbleGlassOverride")?.let { stored ->
             BubbleGlassMode.entries.firstOrNull { it.name == stored }
         },
+        gyroParallaxEnabled = optNullableBoolean("gyroParallaxEnabled"),
         messages = restoredMessages
     )
 }
@@ -6848,6 +6880,11 @@ private fun JSONObject.optNullableString(name: String): String? {
 private fun JSONObject.optNullableLong(name: String): Long? {
     if (!has(name) || isNull(name)) return null
     return optLong(name).takeIf { it > 0L }
+}
+
+private fun JSONObject.optNullableBoolean(name: String): Boolean? {
+    if (!has(name) || isNull(name)) return null
+    return optBoolean(name)
 }
 
 private fun previewForRestored(messages: List<ChatMessage>): String {
