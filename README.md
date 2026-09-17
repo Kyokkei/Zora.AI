@@ -9,7 +9,7 @@
 [![UI: Jetpack Compose](https://img.shields.io/badge/UI-Jetpack_Compose-4285F4.svg?logo=jetpackcompose&logoColor=white)](#-features)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Architecture: 100% BYOK](https://img.shields.io/badge/Architecture-100%25_BYOK_%26_Local--First-blueviolet.svg)](#-privacy--zero-telemetry-manifesto)
-[![Build: v2.2.9](https://img.shields.io/badge/Release-v2.2.9_(Build_245)-success.svg)](https://github.com/Z0ra-AI/Zora.AI/releases)
+[![Build: v2.2.9](https://img.shields.io/badge/Release-v2.2.9_(Build_245)-success.svg)](https://github.com/Kyokkei/Zora.AI/releases)
 
 **Zora.AI** is an advanced, production-grade native Android client engineered for high-fidelity AI roleplay, multimodal streaming, and complete creative sovereignty.
 
@@ -132,7 +132,7 @@ Zora.AI allows direct model parameter customization (temperature, thinking token
 
 ```powershell
 # Clone the repository
-git clone https://github.com/Z0ra-AI/Zora.AI.git
+git clone https://github.com/Kyokkei/Zora.AI.git
 cd Zora.AI
 
 # Build Release APK

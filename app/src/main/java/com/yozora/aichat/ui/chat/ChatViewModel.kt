@@ -5904,7 +5904,7 @@ private const val MAX_PROJECT_INSTRUCTION_CHARS = 16_000
 private const val MAX_STORY_LORE_CHARS = 16_000
 private const val MAX_LEVEL_XP = 1_500
 private const val XP_PER_TEXT_MESSAGE = 10
-private const val GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/Z0ra-AI/Zora.AI/releases/latest"
+private const val GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/Kyokkei/Zora.AI/releases/latest"
 private const val UPDATE_METADATA_ASSET_NAME = "zora-update.json"
 private const val UPDATE_CACHE_DIR = "updates"
 
