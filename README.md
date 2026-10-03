@@ -207,15 +207,17 @@ Acquire your API keys directly from upstream providers:
 
 ---
 
-## 👑 Solo Leveling Credits
+## 💌 Credits & Dedication
 
-Engineered and maintained autonomously as a solo-developer project:
+Created and maintained by **Phan Chi Vy**.
 
-* **Lead Architect & Android Developer**: Phan Chi Vy
-* **UI/UX & Shader Design**: Phan Chi Vy
-* **QA & Systems Testing**: Phan Chi Vy
-* **Copywriting & Documentation**: Phan Chi Vy
-* **Lead Barista / Coffee Optimization**: Phan Chi Vy
+Zora.AI began as an app for my girlfriend, **Trâm Anh**. She enjoyed roleplaying with all kinds of characters, and I wanted to make something she could enjoy in her own way.
+
+The project grew, one feature and one fix at a time. But its beginning will always be the same: without her, this app would never have existed.
+
+> Trâm Anh, thank you for seven years together.
+>
+> Thank you for everything.
 
 ---
 
