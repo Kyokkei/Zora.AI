@@ -241,4 +241,20 @@
     <string name="ob_choose_roleplay">Roleplay mode</string>
     <string name="ob_choose_legacy">Legacy mode</string>
     <string name="ob_welcome_hint">You can change this anytime in Settings -> App Settings.</string>
+    <string name="conversation_beginning">Beginning of conversation</string>
+    <string name="jump_to_beginning">Beginning</string>
+    <string name="jump_to_latest">Latest</string>
+    <string name="search_conversation">Search this conversation</string>
+    <string name="search_conversation_hint">Find a message, scene, or character name.</string>
+    <string name="search_result_count">%1$d matching messages</string>
+    <string name="close_search">Close search</string>
+    <string name="search_result_position">Match %1$d of %2$d</string>
+    <string name="previous_search_result">Previous match</string>
+    <string name="next_search_result">Next match</string>
+    <string name="previous_reply">Previous reply</string>
+    <string name="next_reply">Next reply</string>
+    <string name="generate_another_reply">Generate another reply</string>
+    <string name="about_this_app">About this app</string>
+    <string name="about_creator_note">A note from the creator</string>
+    <string name="about_dedication">I made this app for my girlfriend. Without her, it would never have existed.\n\nTram Anh, thank you for seven years together.</string>
 </resources>

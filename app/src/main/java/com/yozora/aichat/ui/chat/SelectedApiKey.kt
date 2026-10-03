@@ -8,6 +8,16 @@ sealed class SelectedApiKey {
     data class RawKey(val key: String) : SelectedApiKey()
 }
 
+internal suspend fun resolveMemberApiKey(
+    member: GroupMember,
+    resolveProvider: suspend (String) -> String?,
+    resolveSelected: suspend (SelectedApiKey) -> String?
+): String? = if (member.selectedKey == SelectedApiKey.None) {
+    resolveProvider(member.persona.vendor.id)
+} else {
+    resolveSelected(member.selectedKey)
+}
+
 internal suspend fun resolveSelectedApiKey(
     selected: SelectedApiKey,
     resolveVault: suspend (String) -> String?

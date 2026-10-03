@@ -1,5 +1,7 @@
 package com.yozora.aichat.data.db
 
+import com.yozora.aichat.data.remote.CustomApiConfig
+
 import android.content.Context
 import android.net.Uri
 import com.yozora.aichat.ui.chat.ApiVendor
@@ -17,6 +19,9 @@ import com.yozora.aichat.ui.chat.PersonaUiState
 import com.yozora.aichat.ui.chat.SafetyLevel
 import com.yozora.aichat.ui.chat.selectedApiKeyFromStored
 import com.yozora.aichat.ui.chat.toStoredString
+import com.yozora.aichat.ui.chat.replyVariantsFromJson
+import com.yozora.aichat.ui.chat.savedReplyVariants
+import com.yozora.aichat.ui.chat.toReplyVariantsJson
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -146,6 +151,8 @@ class ChatRepository private constructor(
                         chatId = session.id,
                         role = message.role,
                         content = message.content,
+                        replyVariantsJson = if (message.replyVariants.isEmpty()) "[]" else message.savedReplyVariants().toReplyVariantsJson().toString(),
+                        selectedReplyVariant = message.selectedReplyVariant,
                         timestamp = now + index,
                         speakerId = message.speakerId,
                         speakerName = message.speakerName,
@@ -230,6 +237,9 @@ private fun GroupMemberEntity.toGroupMember(): GroupMember {
 }
 
 private fun MessageEntity.toChatMessage(): ChatMessage {
+    val variants = replyVariantsFromJson(replyVariantsJson)
+    val selectedVariant = if (variants.isEmpty()) 0 else selectedReplyVariant.coerceIn(variants.indices)
+    val variant = variants.getOrNull(selectedVariant)
     val imageUris = runCatching {
         val raw = JSONArray(imageUrisJson)
         buildList {
@@ -243,6 +253,9 @@ private fun MessageEntity.toChatMessage(): ChatMessage {
         id = id,
         role = role,
         content = normalizeCallTranscriptContent(content),
+        replyVariants = variants,
+        selectedReplyVariant = selectedVariant,
+        reaction = variant?.reaction,
         speakerId = speakerId,
         speakerName = speakerName,
         imageUris = imageUris.take(12),
@@ -272,6 +285,7 @@ private fun PersonaUiState.toJsonString(): String {
         .put("instructionPrompt", instructionPrompt)
         .put("vendor", vendor.id)
         .put("model", model)
+        .put("customApi", customApi.toJson())
         .put("safetyLevel", safetyLevel.name)
         .put("thinkingEffort", thinkingEffort.name)
         .put("temperature", temperature.toDouble())
@@ -310,6 +324,7 @@ private fun String.toPersonaUiState(): PersonaUiState {
         instructionPrompt = restoredPrompt,
         vendor = vendor,
         model = normalizeStoredModel(vendor, json.optString("model")),
+        customApi = CustomApiConfig.fromJson(json.optJSONObject("customApi")),
         safetyLevel = SafetyLevel.entries.firstOrNull { it.name == json.optString("safetyLevel") } ?: SafetyLevel.None,
         thinkingEffort = GeminiThinkingEffort.entries.firstOrNull { it.name == json.optString("thinkingEffort") }
             ?: GeminiThinkingEffort.Low,

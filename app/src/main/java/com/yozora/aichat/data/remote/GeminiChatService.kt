@@ -117,7 +117,8 @@ class GeminiChatService(
         return when (vendor) {
             ApiVendor.Google,
             ApiVendor.GPT,
-            ApiVendor.Claude -> true
+            ApiVendor.Claude,
+            ApiVendor.Custom -> true
 
             ApiVendor.Grok -> listOf("build", "multi-agent", "reasoning", "fast")
                 .none { marker -> normalized.contains(marker) }
@@ -179,7 +180,8 @@ class GeminiChatService(
 
             ApiVendor.GPT,
             ApiVendor.Grok,
-            ApiVendor.Mixtral -> sendOpenAiCompatible(
+            ApiVendor.Mixtral,
+            ApiVendor.Custom -> sendOpenAiCompatible(
                 apiKey = apiKey,
                 vendor = vendor,
                 persona = persona,
@@ -256,7 +258,8 @@ class GeminiChatService(
 
             ApiVendor.GPT,
             ApiVendor.Grok,
-            ApiVendor.Mixtral -> sendOpenAiToolPlanning(
+            ApiVendor.Mixtral,
+            ApiVendor.Custom -> sendOpenAiToolPlanning(
                 apiKey = apiKey,
                 vendor = vendor,
                 persona = persona,
@@ -765,12 +768,7 @@ class GeminiChatService(
         images: List<Bitmap>,
         enabledTools: Set<String>
     ): GeminiToolPlan = withContext(Dispatchers.IO) {
-        val url = when (vendor) {
-            ApiVendor.GPT -> "https://api.openai.com/v1/chat/completions"
-            ApiVendor.Grok -> "https://api.x.ai/v1/chat/completions"
-            ApiVendor.Mixtral -> "https://api.mistral.ai/v1/chat/completions"
-            else -> error("Unsupported OpenAI-compatible vendor")
-        }
+        val url = openAiChatUrl(vendor, persona)
         val messages = JSONArray()
             .put(JSONObject().put("role", "system").put("content", finalSystemPrompt))
         history.forEach { message ->
@@ -780,7 +778,7 @@ class GeminiChatService(
         messages.put(JSONObject().put("role", "user").put("content", openAiUserContent(userInput, images)))
 
         val body = JSONObject()
-            .put("model", persona.model)
+            .put("model", persona.model.trim())
             .put("messages", messages)
             .put("temperature", persona.temperature.toDouble())
             .put("max_tokens", 4096)
@@ -790,7 +788,8 @@ class GeminiChatService(
         val json = postJson(
             url = url,
             headers = mapOf("Authorization" to "Bearer $apiKey"),
-            body = body
+            body = body,
+            customApi = persona.customApi.takeIf { vendor == ApiVendor.Custom }
         )
         val message = json.getJSONArray("choices").getJSONObject(0).getJSONObject("message")
         val toolCall = message.optJSONArray("tool_calls")
@@ -880,12 +879,7 @@ class GeminiChatService(
         finalSystemPrompt: String,
         images: List<Bitmap>
     ): GeminiChatReply = withContext(Dispatchers.IO) {
-        val url = when (vendor) {
-            ApiVendor.GPT -> "https://api.openai.com/v1/chat/completions"
-            ApiVendor.Grok -> "https://api.x.ai/v1/chat/completions"
-            ApiVendor.Mixtral -> "https://api.mistral.ai/v1/chat/completions"
-            else -> error("Unsupported OpenAI-compatible vendor")
-        }
+        val url = openAiChatUrl(vendor, persona)
         val messages = JSONArray()
             .put(JSONObject().put("role", "system").put("content", finalSystemPrompt))
         history.forEach { message ->
@@ -895,7 +889,7 @@ class GeminiChatService(
         messages.put(JSONObject().put("role", "user").put("content", openAiUserContent(userInput, images)))
 
         val body = JSONObject()
-            .put("model", persona.model)
+            .put("model", persona.model.trim())
             .put("messages", messages)
             .put("temperature", persona.temperature.toDouble())
             .put("max_tokens", 4096)
@@ -903,7 +897,8 @@ class GeminiChatService(
         val json = postJson(
             url = url,
             headers = mapOf("Authorization" to "Bearer $apiKey"),
-            body = body
+            body = body,
+            customApi = persona.customApi.takeIf { vendor == ApiVendor.Custom }
         )
         val content = extractOpenAiContent(json.getJSONArray("choices")
             .getJSONObject(0)
@@ -1371,20 +1366,63 @@ class GeminiChatService(
     private fun postJson(
         url: String,
         headers: Map<String, String>,
-        body: JSONObject
+        body: JSONObject,
+        customApi: CustomApiConfig? = null
+    ): JSONObject = requestJson(url, headers, body, customApi)
+
+    private fun openAiChatUrl(vendor: ApiVendor, persona: PersonaEntity): String = when (vendor) {
+        ApiVendor.GPT -> "https://api.openai.com/v1/chat/completions"
+        ApiVendor.Grok -> "https://api.x.ai/v1/chat/completions"
+        ApiVendor.Mixtral -> "https://api.mistral.ai/v1/chat/completions"
+        ApiVendor.Custom -> {
+            require(persona.model.isNotBlank()) { "Enter a model ID for the custom provider." }
+            persona.customApi.endpoint("chat/completions")
+        }
+        else -> error("Unsupported OpenAI-compatible vendor")
+    }
+
+    suspend fun fetchCustomModels(config: CustomApiConfig, apiKey: String): Result<List<String>> =
+        resultCatchingNonCancellation {
+            withContext(Dispatchers.IO) {
+                val json = requestJson(
+                    config.endpoint("models"),
+                    mapOf("Authorization" to "Bearer $apiKey"),
+                    customApi = config
+                )
+                val data = json.optJSONArray("data") ?: error("The provider did not return a model list. Enter a model ID manually.")
+                buildList {
+                    for (index in 0 until data.length()) {
+                        data.optJSONObject(index)?.optString("id")?.trim()
+                            ?.takeIf { it.isNotEmpty() }?.let(::add)
+                    }
+                }.distinct().sorted().also {
+                    require(it.isNotEmpty()) { "No models returned. Enter a model ID manually." }
+                }
+            }
+        }
+
+    private fun requestJson(
+        url: String,
+        headers: Map<String, String>,
+        body: JSONObject? = null,
+        customApi: CustomApiConfig? = null
     ): JSONObject {
-        val connection = URL(url).openConnection() as HttpURLConnection
+        val proxy = customApi?.networkProxy()
+        val connection = (if (proxy == null) URL(url).openConnection() else URL(url).openConnection(proxy)) as HttpURLConnection
         return try {
             connection.apply {
-                requestMethod = "POST"
-                doOutput = true
+                requestMethod = if (body == null) "GET" else "POST"
+                doOutput = body != null
+                if (customApi != null) instanceFollowRedirects = false
                 connectTimeout = 30_000
                 readTimeout = 120_000
                 setRequestProperty("Content-Type", "application/json")
                 headers.forEach { (key, value) -> setRequestProperty(key, value) }
             }
-            OutputStreamWriter(connection.outputStream).use { writer ->
-                writer.write(body.toString())
+            if (body != null) {
+                OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { writer ->
+                    writer.write(body.toString())
+                }
             }
             val statusCode = connection.responseCode
             val stream = if (statusCode in 200..299) {

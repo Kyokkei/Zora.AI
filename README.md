@@ -9,7 +9,7 @@
 [![UI: Jetpack Compose](https://img.shields.io/badge/UI-Jetpack_Compose-4285F4.svg?logo=jetpackcompose&logoColor=white)](#-features)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Architecture: 100% BYOK](https://img.shields.io/badge/Architecture-100%25_BYOK_%26_Local--First-blueviolet.svg)](#-privacy--zero-telemetry-manifesto)
-[![Build: v2.2.9](https://img.shields.io/badge/Release-v2.2.9_(Build_245)-success.svg)](https://github.com/Kyokkei/Zora.AI/releases)
+[![Build: v2.3.0](https://img.shields.io/badge/Release-v2.3.0_(Build_246)-success.svg)](https://github.com/Kyokkei/Zora.AI/releases)
 
 **Zora.AI** is an advanced, production-grade native Android client engineered for high-fidelity AI roleplay, multimodal streaming, and complete creative sovereignty.
 
@@ -159,9 +159,18 @@ Acquire your API keys directly from upstream providers:
 ---
 
 <details>
-<summary><b>📜 Changelog & Version History (v2.2.3 – v2.2.9)</b></summary>
+<summary><b>📜 Changelog & Version History (v2.2.3 – v2.3.0)</b></summary>
 
-### What's New in v2.2.9
+### What's New in v2.3.0
+* 🔍 **Conversation Navigation**: Search saved messages, jump to matching results, and go directly to the beginning of a conversation.
+* 🔀 **Alternate Replies**: Swipe between saved AI replies with alternatives preserved across restarts.
+* 🫧 **Glass Navigation**: Refreshed bottom navigation with custom icons and improved API vault button placement.
+* 🔑 **Reliable API Key Selection**: Normal Send uses the character's saved individual key; adding a key through the chat picker's vault selects it automatically.
+* 🌐 **Custom API Vendor**: Configure an OpenAI-compatible base URL, optional proxy, and model ID, or fetch the provider's model list. Includes a Google Gemini URL preset.
+* 💌 **About This App**: A personal note from the creator in App Settings.
+* 🛡️ **Room Database Schema v18**: Adds storage for alternate replies through a migration that preserves existing conversations.
+
+### Previously in v2.2.9
 * 📱 **Holographic Gyro-Parallax Backgrounds**: Real-time device rotation vector sensors smoothly translate chat wallpapers as you tilt your phone, with edge overscan clamping and per-session overrides.
 * 🛡️ **Room Database Schema v14**: Seamless schema migration (`MIGRATION_13_14`) adding per-session parallax configuration without data loss.
 

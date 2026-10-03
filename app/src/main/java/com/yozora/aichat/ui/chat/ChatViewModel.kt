@@ -39,6 +39,7 @@ import com.yozora.aichat.ui.OnboardingAction
 import com.yozora.aichat.data.db.PersonaEntity
 import com.yozora.aichat.data.db.TtsAudioCacheEntity
 import com.yozora.aichat.data.remote.ApiHttpException
+import com.yozora.aichat.data.remote.CustomApiConfig
 import com.yozora.aichat.data.remote.DORO_AUTO_FALLBACK_MODELS
 import com.yozora.aichat.data.remote.DORO_AUTO_MODEL_ID
 import com.yozora.aichat.data.remote.DoroAutoExhaustedException
@@ -95,7 +96,9 @@ data class ChatMessage(
     val isImageLoading: Boolean = false,
     val reaction: String? = null,
     val deliveryStatus: MessageDeliveryStatus = MessageDeliveryStatus.Sent,
-    val time: String = currentTime()
+    val time: String = currentTime(),
+    val replyVariants: List<ReplyVariant> = emptyList(),
+    val selectedReplyVariant: Int = 0
 ) {
     val imageUri: Uri?
         get() = imageUris.firstOrNull()
@@ -246,7 +249,8 @@ enum class ApiVendor(
         "Mixtral",
         "mistral-medium-3.5",
         listOf("mistral-medium-3.5", "mistral-small-4", "mistral-large-3", "ministral-14b", "ministral-8b", "ministral-3b")
-    )
+    ),
+    Custom("custom", "Custom", "", emptyList())
 }
 
 enum class SafetyLevel(
@@ -464,6 +468,7 @@ data class PersonaUiState(
     val instructionPrompt: String = "",
     val vendor: ApiVendor = ApiVendor.Google,
     val model: String = DORO_AUTO_MODEL_ID,
+    val customApi: CustomApiConfig = CustomApiConfig(),
     val safetyLevel: SafetyLevel = SafetyLevel.None,
     val thinkingEffort: GeminiThinkingEffort = GeminiThinkingEffort.Low,
     val temperature: Float = 1.0f,
@@ -666,6 +671,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     var morePersonaOptions by mutableStateOf(false)
         private set
 
+    suspend fun fetchCustomModels(config: CustomApiConfig): Result<List<String>> {
+        val member = activeGroupMember
+        val key = resolvedApiKeyOrNull(member)
+            ?: return Result.failure(IllegalArgumentException("Pick an API key before fetching models."))
+        return geminiChatService.fetchCustomModels(config, key)
+    }
+
     var apiKeyDialogVisible by mutableStateOf(false)
         private set
 
@@ -686,6 +698,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private var apiKeyDialogTarget: ApiKeyDialogTarget = ApiKeyDialogTarget.Provider
     private var apiKeyPickerTarget: ApiKeyPickerTarget = ApiKeyPickerTarget.Provider
+    private var vaultOpenedFromPicker = false
 
     var selectedProviderKeys by mutableStateOf<Map<String, SelectedApiKey>>(emptyMap())
         private set
@@ -948,6 +961,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val activeIndividualApiKeyLabel: String?
         get() = labelForSelectedKey(activeGroupMember.selectedKey)
 
+    val hasActiveApiKey: Boolean
+        get() {
+            val selected = activeGroupMember.selectedKey.takeUnless { it == SelectedApiKey.None }
+                ?: selectedProviderKeys[persona.vendor.id] ?: SelectedApiKey.None
+            return when (selected) {
+                SelectedApiKey.None -> false
+                is SelectedApiKey.RawKey -> selected.key.isNotBlank()
+                is SelectedApiKey.VaultEntry -> vaultEntries.any { it.id == selected.id && it.key.isNotBlank() }
+            }
+        }
+
     val groupMemberApiKeyLabels: Map<String, String>
         get() = groupMembers.mapNotNull { member ->
             labelForSelectedKey(member.selectedKey)?.let { member.id to it }
@@ -1147,9 +1171,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
             }
-            val apiKey = resolveProviderKey(provider.id)
+            val apiKey = resolvedApiKeyOrNull(targetMember)
             if (apiKey == null) {
-                openApiKeyPicker(ApiKeyPickerTarget.Provider)
+                openApiKeyPicker(
+                    if (targetMember.selectedKey == SelectedApiKey.None) ApiKeyPickerTarget.Provider
+                    else ApiKeyPickerTarget.Member(targetMember.id)
+                )
                 chatError = "Add a ${provider.label} API key first."
                 return@launch
             }
@@ -1639,6 +1666,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun retryMessage(messageId: String) {
         if (sendGate.isSending(activeSessionId)) return
         val session = activeSession
+        if (session.swipeableReply()?.id == messageId) {
+            generateReplyVariant(messageId)
+            return
+        }
         val targetIndex = session.messages.indexOfFirst { it.id == messageId }
         if (targetIndex < 0) return
 
@@ -1660,6 +1691,123 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         draft = message.content
         attachedImageUris = message.imageUris
         sendDraft()
+    }
+
+    fun selectReplyVariant(messageId: String, variantIndex: Int) {
+        if (sendGate.isSending(activeSessionId)) return
+        val session = activeSession
+        val message = session.swipeableReply()?.takeIf { it.id == messageId } ?: return
+        if (variantIndex !in message.replyVariants.indices) return
+        val selected = message.withReplyVariant(variantIndex)
+        updateActiveSession { current ->
+            current.copy(
+                messages = current.messages.dropLast(1) + selected,
+                preview = previewFor(current.messages.dropLast(1) + selected),
+                updatedAt = currentTime(),
+                archivedContext = if (messageId in current.archivedMessageIds) "" else current.archivedContext,
+                archivedMessageIds = if (messageId in current.archivedMessageIds) emptySet() else current.archivedMessageIds
+            )
+        }
+    }
+
+    fun generateReplyVariant(messageId: String) {
+        val session = activeSession
+        val target = session.swipeableReply()?.takeIf { it.id == messageId } ?: return
+        val sessionId = session.id
+        val members = session.normalizedMembers()
+        val member = target.speakerId?.let { id -> members.firstOrNull { it.id == id } }
+            ?: target.speakerName?.let { name -> members.firstOrNull { it.persona.displayName == name } }
+            ?: members.firstOrNull { it.id == session.activeMemberId }
+            ?: members.first()
+        val sendToken = claimSend(sessionId) ?: return
+        viewModelScope.launch {
+            try {
+                if (activeSessionId == sessionId) chatError = null
+                val apiKey = resolvedApiKeyOrNull(member)
+                if (apiKey.isNullOrBlank()) {
+                    if (activeSessionId == sessionId) {
+                        openApiKeyPicker(
+                            if (member.selectedKey == SelectedApiKey.None) ApiKeyPickerTarget.Provider
+                            else ApiKeyPickerTarget.Member(member.id)
+                        )
+                        chatError = "Add a ${member.persona.vendor.label} API key for ${member.persona.displayName} first."
+                    }
+                    return@launch
+                }
+                val prefix = session.messages.dropLast(1)
+                val source = prefix.lastOrNull { it.role == "user" }
+                val isGroup = members.size > 1
+                val isDirectReply = prefix.lastOrNull()?.role == "user"
+                val history = if (isDirectReply) prefix.dropLast(1) else prefix
+                val userInput = when {
+                    isGroup && source != null -> groupMemberInput(
+                        originalUserMessage = source.content.ifBlank { "Please respond to this image." },
+                        member = member,
+                        members = members,
+                        turn = prefix.dropWhile { it.id != source.id }.count { it.role == "model" } + 1,
+                        totalTurns = prefix.dropWhile { it.id != source.id }.count { it.role == "model" } + 1
+                    )
+                    isDirectReply -> source?.content?.ifBlank { "Please respond to this image." }.orEmpty()
+                    else -> "[Narrator direction; this is not dialogue spoken by the user.]\nContinue the scene naturally with the next response from ${member.persona.displayName}."
+                }
+                val images = if (isDirectReply || isGroup) {
+                    source?.imageUris.orEmpty().mapNotNull { loadBitmap(it) }
+                } else emptyList()
+                val prefixIds = prefix.mapTo(hashSetOf()) { it.id }
+                val archiveValid = session.archivedMessageIds.all { it in prefixIds }
+                val contextSession = session.copy(
+                    messages = prefix,
+                    archivedContext = session.archivedContext.takeIf { archiveValid }.orEmpty(),
+                    archivedMessageIds = session.archivedMessageIds.takeIf { archiveValid } ?: emptySet()
+                )
+                val reply = retryTemporaryUnavailable {
+                    sendManagedMessage(
+                        sessionId = sessionId,
+                        apiKey = apiKey,
+                        persona = personaEntityForSession(
+                            session = contextSession,
+                            id = member.id,
+                            persona = member.persona,
+                            refreshSession = false
+                        ),
+                        history = if (isGroup) history.toEntitiesForGroupMember(
+                            chatId = sessionId,
+                            targetMemberId = member.id,
+                            groupMembers = members
+                        ) else history.toEntities(sessionId),
+                        userInput = userInput,
+                        vendor = member.persona.vendor,
+                        safetyLevel = member.persona.safetyLevel,
+                        images = images,
+                        webSearchEnabled = false,
+                        masterPrompt = masterSystemPrompt,
+                        filterArchivedHistory = archiveValid
+                    )
+                }.getOrElse { throwable ->
+                    if (activeSessionId == sessionId) chatError = friendlySendError(throwable)
+                    return@launch
+                }
+                recordUsage(reply)
+                val content = cleanModelResponseOrNull(reply.text, member.persona.displayName)
+                if (content == null) {
+                    if (activeSessionId == sessionId) chatError = "The model returned an empty response. Your saved replies are unchanged."
+                    return@launch
+                }
+                val current = sessions.firstOrNull { it.id == sessionId } ?: return@launch
+                val currentTarget = current.swipeableReply()?.takeIf {
+                    it.id == target.id && it.content == target.content &&
+                        it.selectedReplyVariant == target.selectedReplyVariant
+                } ?: return@launch
+                val generated = currentTarget.withAdditionalReply(content, currentTime())
+                replaceMessage(
+                    sessionId, target.id, generated,
+                    previewFor(current.messages.dropLast(1) + generated),
+                    invalidateArchivedContext = target.id in current.archivedMessageIds
+                )
+            } finally {
+                releaseSend(sessionId, sendToken)
+            }
+        }
     }
 
     fun speakMessage(message: ChatMessage) {
@@ -3513,18 +3661,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectVaultEntryForTarget(entryId: String) {
         if (vaultEntries.none { it.id == entryId }) return
-        val selected = SelectedApiKey.VaultEntry(entryId)
-        when (val target = apiKeyPickerTarget) {
-            ApiKeyPickerTarget.Provider -> viewModelScope.launch {
-                apiKeyManager.setProviderSelectedKey(persona.vendor.id, selected)
-            }
-            ApiKeyPickerTarget.Director -> updateActiveSession {
-                it.copy(directorSelectedKey = selected)
-            }
+        val target = apiKeyPickerTarget
+        val providerId = persona.vendor.id
+        viewModelScope.launch {
+            applyApiKeySelection(target, SelectedApiKey.VaultEntry(entryId), providerId)
+            apiKeyPickerVisible = false
+            chatError = null
+        }
+    }
+
+    private suspend fun applyApiKeySelection(target: ApiKeyPickerTarget, selected: SelectedApiKey, providerId: String) {
+        when (target) {
+            ApiKeyPickerTarget.Provider -> apiKeyManager.setProviderSelectedKey(providerId, selected)
+            ApiKeyPickerTarget.Director -> updateActiveSession { it.copy(directorSelectedKey = selected) }
             is ApiKeyPickerTarget.Member -> updateGroupMemberSelectedKey(target.memberId, selected)
         }
-        apiKeyPickerVisible = false
-        chatError = null
     }
 
     fun useCustomKeyForTarget() {
@@ -3539,20 +3690,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openVaultScreen() {
+        vaultOpenedFromPicker = false
         appSettingsVisible = false
         vaultScreenVisible = true
     }
 
+    fun openVaultFromKeyPicker() {
+        apiKeyPickerVisible = false
+        openVaultScreen()
+        vaultOpenedFromPicker = true
+    }
+
     fun closeVaultScreen() {
         vaultScreenVisible = false
+        if (vaultOpenedFromPicker) apiKeyPickerVisible = true
+        vaultOpenedFromPicker = false
     }
 
     fun addVaultEntry(name: String, key: String) {
+        val selectAfterSaving = vaultOpenedFromPicker
+        val target = apiKeyPickerTarget
+        val providerId = persona.vendor.id
         viewModelScope.launch {
-            if (apiKeyManager.addVaultEntry(name, key) == null) {
+            val entryId = apiKeyManager.addVaultEntry(name, key)
+            if (entryId == null) {
                 chatError = if (vaultEntries.size >= ApiKeyManager.MAX_VAULT_ENTRIES) {
                     "API Key Vault is limited to ${ApiKeyManager.MAX_VAULT_ENTRIES} entries."
                 } else "Name and key are required."
+            } else if (selectAfterSaving) {
+                applyApiKeySelection(target, SelectedApiKey.VaultEntry(entryId), providerId)
+                vaultOpenedFromPicker = false
+                vaultScreenVisible = false
+                apiKeyPickerVisible = false
+                chatError = null
             }
         }
     }
@@ -3727,6 +3897,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 model = vendor.defaultModel
             )
         }
+    }
+
+    fun updateCustomApi(config: CustomApiConfig) {
+        updatePersona { it.copy(customApi = config) }
     }
 
     fun updatePersonaName(value: String) {
@@ -4483,13 +4657,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun resolvedApiKeyOrNull(member: GroupMember): String? {
-        return if (member.selectedKey == SelectedApiKey.None) {
-            resolveProviderKey(member.persona.vendor.id)
-        } else {
-            resolveKey(member.selectedKey)
-        }
-    }
+    private suspend fun resolvedApiKeyOrNull(member: GroupMember): String? =
+        resolveMemberApiKey(member, ::resolveProviderKey, ::resolveKey)
 
     internal suspend fun resolveKey(selected: SelectedApiKey): String? =
         resolveSelectedApiKey(selected, apiKeyManager::resolveVaultKey)
@@ -4547,9 +4716,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun personaEntityForSession(
         session: ChatSession,
         id: String,
-        persona: PersonaUiState = session.persona
+        persona: PersonaUiState = session.persona,
+        refreshSession: Boolean = true
     ): PersonaEntity {
-        val currentSession = sessions.firstOrNull { it.id == session.id } ?: session
+        val currentSession = if (refreshSession) {
+            sessions.firstOrNull { it.id == session.id } ?: session
+        } else session
         return persona.toEntity(
             id = id,
             memoryBlock = memoryForSession(currentSession),
@@ -4574,9 +4746,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         safetyLevel: SafetyLevel,
         images: List<Bitmap>,
         webSearchEnabled: Boolean,
-        masterPrompt: String?
+        masterPrompt: String?,
+        filterArchivedHistory: Boolean = true
     ): Result<GeminiChatReply> {
-        val managedHistory = mutableHistoryForSession(sessionId, history)
+        val managedHistory = if (filterArchivedHistory) mutableHistoryForSession(sessionId, history) else history
         val effectiveMasterPrompt = masterPromptWithReactionFeedback(sessionId, masterPrompt)
         val requestId = reserveOutgoingRequest(
             sessionId = sessionId,
@@ -5035,7 +5208,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         sessionId: String,
         messageId: String,
         message: ChatMessage,
-        preview: String
+        preview: String,
+        invalidateArchivedContext: Boolean = false
     ) {
         val index = sessions.indexOfFirst { it.id == sessionId }
         if (index >= 0) {
@@ -5047,7 +5221,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 sessions[index] = session.copy(
                     messages = updatedMessages,
                     preview = preview,
-                    updatedAt = currentTime()
+                    updatedAt = currentTime(),
+                    archivedContext = if (invalidateArchivedContext) "" else session.archivedContext,
+                    archivedMessageIds = if (invalidateArchivedContext) emptySet() else session.archivedMessageIds
                 )
                 persistChatState()
             }
@@ -5674,6 +5850,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             ?.replace("\\\"", "\"")
 
         return when {
+            throwable is ApiHttpException && throwable.statusCode == 403 &&
+                throwable.apiMessage.contains("project has been denied access", ignoreCase = true) ->
+                "The API project was denied access by the provider. Contact the provider's support."
+
             normalized.contains("no gemini response candidate returned") ->
                 if (languageCode == "vi") {
                     "ái chà, hình như câu chat của bạn hơi nhạy cảm rồi đó. chỉnh nó lại rồi gửi lại đi nà"
@@ -6695,6 +6875,7 @@ private fun PersonaUiState.toJson(): JSONObject {
         .put("instructionPrompt", instructionPrompt)
         .put("vendor", vendor.id)
         .put("model", model)
+        .put("customApi", customApi.toJson())
         .put("safetyLevel", safetyLevel.name)
         .put("thinkingEffort", thinkingEffort.name)
         .put("temperature", temperature.toDouble())
@@ -6737,6 +6918,7 @@ private fun JSONObject.toPersonaUiState(): PersonaUiState {
         instructionPrompt = restoredPrompt,
         vendor = vendor,
         model = normalizeStoredModel(vendor, optString("model")),
+        customApi = CustomApiConfig.fromJson(optJSONObject("customApi")),
         safetyLevel = SafetyLevel.entries.firstOrNull { it.name == optString("safetyLevel") } ?: SafetyLevel.None,
         thinkingEffort = GeminiThinkingEffort.entries.firstOrNull { it.name == optString("thinkingEffort") }
             ?: GeminiThinkingEffort.Low,
@@ -6830,11 +7012,15 @@ internal fun ChatMessage.toJson(): JSONObject {
             }
         )
         .put("reaction", reaction ?: JSONObject.NULL)
+        .put("replyVariants", if (replyVariants.isEmpty()) JSONArray() else savedReplyVariants().toReplyVariantsJson())
+        .put("selectedReplyVariant", selectedReplyVariant)
         .put("deliveryStatus", deliveryStatus.name)
         .put("time", time)
 }
 
 internal fun JSONObject.toChatMessage(): ChatMessage {
+    val variants = replyVariantsFromJson(optJSONArray("replyVariants")?.toString() ?: "[]")
+    val selectedVariant = if (variants.isEmpty()) 0 else optInt("selectedReplyVariant").coerceIn(variants.indices)
     val imageUriArray = optJSONArray("imageUris")
     val restoredImageUris = buildList {
         if (imageUriArray != null) {
@@ -6855,6 +7041,8 @@ internal fun JSONObject.toChatMessage(): ChatMessage {
         remoteImageUrl = optNullableString("remoteImageUrl"),
         isImageLoading = false,
         reaction = restoreMessageReaction(optNullableString("reaction")),
+        replyVariants = variants,
+        selectedReplyVariant = selectedVariant,
         deliveryStatus = optString("deliveryStatus")
             .let { stored -> MessageDeliveryStatus.entries.firstOrNull { it.name == stored } }
             ?: MessageDeliveryStatus.Delivered,
@@ -6986,7 +7174,8 @@ private fun PersonaUiState.toEntity(
         systemPrompt = promptSections.joinToString("\n\n"),
         model = model,
         temperature = temperature,
-        thinkingBudget = thinkingEffort.thinkingBudget
+        thinkingBudget = thinkingEffort.thinkingBudget,
+        customApi = customApi
     )
 }
 

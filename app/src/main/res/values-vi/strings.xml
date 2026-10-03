@@ -238,4 +238,20 @@
     <string name="ob_choose_roleplay">Chế độ nhập vai</string>
     <string name="ob_choose_legacy">Chế độ Legacy</string>
     <string name="ob_welcome_hint">Bạn có thể đổi bất cứ lúc nào trong Cài đặt -> Cài đặt ứng dụng.</string>
+    <string name="conversation_beginning">Bắt đầu cuộc trò chuyện</string>
+    <string name="jump_to_beginning">Đầu trò chuyện</string>
+    <string name="jump_to_latest">Mới nhất</string>
+    <string name="search_conversation">Tìm trong cuộc trò chuyện</string>
+    <string name="search_conversation_hint">Tìm tin nhắn, cảnh truyện hoặc tên nhân vật.</string>
+    <string name="search_result_count">%1$d tin nhắn phù hợp</string>
+    <string name="close_search">Đóng tìm kiếm</string>
+    <string name="search_result_position">Kết quả %1$d / %2$d</string>
+    <string name="previous_search_result">Kết quả trước</string>
+    <string name="next_search_result">Kết quả tiếp theo</string>
+    <string name="previous_reply">Câu trả lời trước</string>
+    <string name="next_reply">Câu trả lời tiếp theo</string>
+    <string name="generate_another_reply">Tạo câu trả lời khác</string>
+    <string name="about_this_app">Về ứng dụng này</string>
+    <string name="about_creator_note">Đôi lời từ người tạo ứng dụng</string>
+    <string name="about_dedication">Tôi làm ứng dụng này cho bạn gái mình. Nếu không có cô ấy, ứng dụng này sẽ không bao giờ ra đời.\n\nTram Anh, cảm ơn em vì bảy năm bên nhau.</string>
 </resources>

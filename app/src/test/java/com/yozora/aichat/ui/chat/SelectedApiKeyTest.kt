@@ -9,6 +9,40 @@ import kotlinx.coroutines.runBlocking
 
 class SelectedApiKeyTest {
     @Test
+    fun memberKeyIsUsedWithoutConsultingMissingProviderKey() = runBlocking {
+        val member = GroupMember(selectedKey = SelectedApiKey.RawKey("individual-key"))
+        assertEquals("individual-key", resolveMemberApiKey(member,
+            resolveProvider = { error("Individual key must take priority over the provider key") },
+            resolveSelected = { resolveSelectedApiKey(it) { null } }))
+    }
+
+    @Test
+    fun savedMemberKeyResolvesFromVaultWithoutProviderSelection() = runBlocking {
+        val member = GroupMember(selectedKey = SelectedApiKey.VaultEntry("saved-id"))
+        assertEquals("saved-key", resolveMemberApiKey(member,
+            resolveProvider = { error("Saved member key must take priority") },
+            resolveSelected = { selected -> resolveSelectedApiKey(selected) { id ->
+                if (id == "saved-id") "saved-key" else null
+            } }))
+    }
+
+    @Test
+    fun memberWithoutOverrideUsesItsMatchingProvider() = runBlocking {
+        val member = GroupMember(persona = PersonaUiState(vendor = ApiVendor.Custom))
+        assertEquals("custom-provider-key", resolveMemberApiKey(member,
+            resolveProvider = { id -> assertEquals("custom", id); "custom-provider-key" },
+            resolveSelected = { error("No individual key was selected") }))
+    }
+
+    @Test
+    fun deletedMemberKeyDoesNotSilentlyUseDifferentProviderKey() = runBlocking {
+        val member = GroupMember(selectedKey = SelectedApiKey.VaultEntry("deleted"))
+        assertEquals(null, resolveMemberApiKey(member,
+            resolveProvider = { error("Do not replace a deleted individual selection with another key") },
+            resolveSelected = { null }))
+    }
+
+    @Test
     fun selectedKeysRoundTrip() {
         val values = listOf(
             SelectedApiKey.None,

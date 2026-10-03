@@ -94,7 +94,7 @@ class ApiKeyManager(
         return preferences[providerKey(providerId)]
             ?.takeIf { it.isNotBlank() }
             ?.let(SelectedApiKey::RawKey)
-            ?: currentKey()?.let(SelectedApiKey::RawKey)
+            ?: if (providerId == "custom") SelectedApiKey.None else currentKey()?.let(SelectedApiKey::RawKey)
             ?: SelectedApiKey.None
     }
 

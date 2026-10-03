@@ -5,6 +5,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.util.UUID
+import com.yozora.aichat.data.remote.CustomApiConfig
 
 data class PersonaEntity(
     val id: String = UUID.randomUUID().toString(),
@@ -13,7 +14,8 @@ data class PersonaEntity(
     val systemPrompt: String,
     val model: String,
     val temperature: Float = 1.0f,
-    val thinkingBudget: Int? = null
+    val thinkingBudget: Int? = null,
+    val customApi: CustomApiConfig = CustomApiConfig()
 )
 
 @Entity(tableName = "sessions")
@@ -93,7 +95,9 @@ data class MessageEntity(
     val remoteImageUrl: String? = null,
     val deliveryStatus: String = "Delivered",
     val time: String = "",
-    val position: Int = 0
+    val position: Int = 0,
+    val replyVariantsJson: String = "[]",
+    val selectedReplyVariant: Int = 0
 )
 
 @Entity(

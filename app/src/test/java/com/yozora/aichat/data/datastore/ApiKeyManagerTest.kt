@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import com.yozora.aichat.ui.chat.SelectedApiKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -14,6 +15,26 @@ import org.junit.Test
 import java.io.File
 
 class ApiKeyManagerTest {
+    @Test
+    fun selectedVaultKeyKeepsReferenceAndUsesLaterKeyUpdates() = withManager { manager ->
+        val id = manager.addVaultEntry("Google", "first-secret")!!
+        val selected = SelectedApiKey.VaultEntry(id)
+        manager.setProviderSelectedKey("google", selected)
+        assertEquals(selected, manager.providerSelectedKey("google"))
+        assertEquals(selected, manager.providerSelectedKeys(listOf("google")).first()["google"])
+        manager.updateVaultEntry(id, "Google renamed", "updated-secret")
+        assertEquals(selected, manager.providerSelectedKey("google"))
+        assertEquals("updated-secret", manager.resolveVaultKey(id))
+    }
+
+    @Test
+    fun customProviderDoesNotInheritLegacyGoogleKey() = withManager { manager ->
+        manager.replaceWithSingleKey("legacy-google-secret")
+        assertEquals(SelectedApiKey.None, manager.providerSelectedKey("custom"))
+        manager.setProviderSelectedKey("custom", SelectedApiKey.RawKey("custom-secret"))
+        assertEquals(SelectedApiKey.RawKey("custom-secret"), manager.providerSelectedKey("custom"))
+    }
+
     @Test
     fun addUpdateDeleteAndResolveVaultEntries() = withManager { manager ->
         val firstId = manager.addVaultEntry("First", "key-one")!!
