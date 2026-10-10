@@ -9277,10 +9277,11 @@ private enum class RoleplayTab {
     Discover,
     Chats,
     Create,
-    Settings
+    Settings,
+    Companion
 }
 
-private data class PresetCharacter(
+internal data class PresetCharacter(
     val sessionId: String? = null,
     val name: String,
     val author: String,
@@ -9337,7 +9338,7 @@ private val RoleplayLightColors = RoleplayColors(
     isLight = true
 )
 
-private val LocalRoleplayColors = staticCompositionLocalOf { RoleplayDarkColors }
+internal val LocalRoleplayColors = staticCompositionLocalOf { RoleplayDarkColors }
 
 @Composable
 private fun RoleplayHubLayout(
@@ -9414,6 +9415,12 @@ private fun RoleplayHubLayout(
                     RoleplayTab.Settings -> {
                         RoleplaySettingsScreen(viewModel = viewModel)
                     }
+                    RoleplayTab.Companion -> {
+                        CompanionHubScreen(
+                            viewModel = viewModel,
+                            onNavigateToCreate = { onTabChange(RoleplayTab.Create) }
+                        )
+                    }
                 }
             }
             RoleplayBottomBar(activeTab = activeTab, onTabChange = onTabChange)
@@ -9430,7 +9437,8 @@ private fun RoleplayBottomBar(
         Triple(RoleplayTab.Discover, stringResource(R.string.nav_discover), DockIcon.Discover),
         Triple(RoleplayTab.Chats, stringResource(R.string.nav_chats), DockIcon.Chats),
         Triple(RoleplayTab.Create, stringResource(R.string.nav_create), DockIcon.Create),
-        Triple(RoleplayTab.Settings, stringResource(R.string.nav_settings), DockIcon.Settings)
+        Triple(RoleplayTab.Settings, stringResource(R.string.nav_settings), DockIcon.Settings),
+        Triple(RoleplayTab.Companion, stringResource(R.string.nav_companion), DockIcon.Companion)
     )
 
     GlassNavigationDock(
@@ -10115,7 +10123,7 @@ private fun CommunityCharacterDetailSheet(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CharacterCarouselCard(
+internal fun CharacterCarouselCard(
     char: PresetCharacter,
     pageCount: Int,
     pageIndex: Int,
@@ -10529,7 +10537,7 @@ private fun CharacterDetailSheet(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CharacterCard(
+internal fun CharacterCard(
     char: PresetCharacter,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null
