@@ -44,7 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-internal enum class DockIcon { Discover, Chats, Create, Settings }
+internal enum class DockIcon { Discover, Chats, Create, Settings, Companion }
 internal data class DockDestination(val label: String, val icon: DockIcon)
 
 @Composable
@@ -159,6 +159,16 @@ private fun DockGlyph(icon: DockIcon, tint: Color, selected: Boolean) {
                         drawRoundRect(tint.copy(alpha = if (selected) 0.18f else 0.06f), Offset(x - 2.8f, y - 2.8f), Size(5.6f, 5.6f), CornerRadius(1.8f))
                         drawRoundRect(tint, Offset(x - 2.8f, y - 2.8f), Size(5.6f, 5.6f), CornerRadius(1.8f), style = stroke)
                     }
+                }
+                DockIcon.Companion -> {
+                    // Head circle
+                    drawCircle(tint.copy(alpha = if (selected) 0.14f else 0.04f), 3.8f, Offset(9f, 7f))
+                    drawCircle(tint, 3.8f, Offset(9f, 7f), style = stroke)
+                    // Shoulders arc
+                    drawArc(tint, 180f, 180f, false, Offset(2f, 10f), Size(14f, 9f), style = stroke)
+                    // Sound-wave arcs (two concentric, right side of head)
+                    drawArc(tint.copy(alpha = 0.72f), -50f, 100f, false, Offset(13.5f, 3.5f), Size(5f, 7f), style = Stroke(width = 1.5f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawArc(tint, -50f, 100f, false, Offset(16f, 1.5f), Size(6f, 10f), style = Stroke(width = 1.5f, cap = StrokeCap.Round, join = StrokeJoin.Round))
                 }
             }
         }

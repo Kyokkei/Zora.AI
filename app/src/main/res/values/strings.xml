@@ -8,6 +8,10 @@
     <string name="nav_chats">Chats</string>
     <string name="nav_create">Create</string>
     <string name="nav_settings">Settings</string>
+    <string name="nav_companion">Companion</string>
+    <string name="companion_start_call">Start Companion Call</string>
+    <string name="companion_no_characters">No characters yet. Create one first!</string>
+    <string name="companion_not_google_hint">Gemini API key required to use Companion</string>
 
     <!-- === DISCOVER SCREEN === -->
     <string name="search_characters">Search Characters</string>

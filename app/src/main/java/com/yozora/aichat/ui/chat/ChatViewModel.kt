@@ -657,6 +657,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var currentVoiceCallModelText = ""
     private var voiceCallVisualReconnectPending = false
     private var lastVoiceCallVisualReconnectAt = 0L
+    @Volatile
+    private var voiceCallResumeHandle: String? = null
     private var draftPersistJob: Job? = null
 
     var draft by mutableStateOf("")
@@ -2273,6 +2275,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         voiceCallStatus = "Idle"
         voiceCallSessionId = null
         voiceCallModelMessageId = null
+        voiceCallResumeHandle = null
         currentVoiceCallModelLineId = null
         currentVoiceCallModelText = ""
         voiceCallVisualReconnectPending = false
@@ -2399,13 +2402,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             ).filterNotNull().joinToString("\n\n---\n\n")
             val callSpeakerId = callMember.id
             val callSpeakerName = personaEntity.name
+            geminiLiveCallService.onSessionResumeHandle = { handle ->
+                voiceCallResumeHandle = handle
+            }
+            geminiLiveCallService.onSessionGoAway = {
+                viewModelScope.launch(Dispatchers.Main) {
+                    reconnectGeminiLiveCallSilently()
+                }
+            }
             geminiLiveCallService.start(
                 config = GeminiLiveCallConfig(
                     apiKey = apiKey,
                     modelId = geminiLiveModelId,
                     systemInstruction = systemInstruction,
                     voiceName = selectedGeminiLiveVoice.label,
-                    priorConversationContext = liveConversationContext(session)
+                    priorConversationContext = liveConversationContext(session),
+                    resumeHandle = voiceCallResumeHandle
                 ),
                 onStatus = { status ->
                     viewModelScope.launch(Dispatchers.Main) {
