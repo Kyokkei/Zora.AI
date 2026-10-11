@@ -41,6 +41,8 @@ fun CompanionStage(
     mouthAa: Float,
     emotion: String = "neutral",
     emotionWeight: Float = 1f,
+    speaking: Boolean = false,
+    interactionKey: String? = null,
     onError: (String) -> Unit = {},
 ) {
     if (vrmUri == null) {
@@ -176,6 +178,21 @@ fun CompanionStage(
                     "window.companion && window.companion.setEmotion(${javascriptString(currentEmotion)},${currentEmotionWeight});",
                 null,
             )
+        }
+    }
+
+    LaunchedEffect(webView, pageReady, speaking, interactionKey) {
+        if (pageReady) {
+            webView.evaluateJavascript(
+                "window.companion && window.companion.setSpeaking(${speaking});",
+                null,
+            )
+            when {
+                interactionKey?.startsWith("wave:") == true ->
+                    webView.evaluateJavascript("window.companion && window.companion.wave();", null)
+                interactionKey?.startsWith("react:") == true ->
+                    webView.evaluateJavascript("window.companion && window.companion.react();", null)
+            }
         }
     }
 

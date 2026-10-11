@@ -36,6 +36,7 @@ import com.yozora.aichat.data.datastore.settingsDataStore
 import com.yozora.aichat.data.db.ChatRepository
 import com.yozora.aichat.data.db.MessageEntity
 import com.yozora.aichat.ui.OnboardingAction
+import com.yozora.aichat.ui.companion.CompanionSettingsStore
 import com.yozora.aichat.data.db.PersonaEntity
 import com.yozora.aichat.data.db.TtsAudioCacheEntity
 import com.yozora.aichat.data.remote.ApiHttpException
@@ -365,19 +366,49 @@ sealed interface AppUpdateState {
     data class Error(val message: String) : AppUpdateState
 }
 
+internal fun composeGeminiLiveSystemInstruction(
+    masterPrompt: String,
+    skillContent: String,
+    personaPrompt: String,
+    companionMode: Boolean,
+    companionPrompt: String
+): String = listOfNotNull(
+    masterPrompt.takeIf { it.isNotBlank() },
+    skillContent.takeIf { it.isNotBlank() },
+    personaPrompt.takeIf { it.isNotBlank() },
+    companionPrompt.takeIf { companionMode && it.isNotBlank() }
+).joinToString("\n\n---\n\n")
+
+enum class GeminiLiveVoiceGender {
+    Female,
+    Male
+}
+
 enum class GeminiLiveVoice(
     val id: String,
     val label: String,
-    val description: String
+    val description: String,
+    val gender: GeminiLiveVoiceGender? = null
 ) {
-    Aoede("aoede", "Aoede", "Clear, melodic, and engaging."),
-    Kore("kore", "Kore", "Calm, professional, and slightly firm."),
-    Leda("leda", "Leda", "Warm and conversational."),
+    Aoede("aoede", "Aoede", "Breezy", GeminiLiveVoiceGender.Female),
+    Kore("kore", "Kore", "Firm", GeminiLiveVoiceGender.Male),
+    Leda("leda", "Leda", "Youthful", GeminiLiveVoiceGender.Female),
+    Callirrhoe("callirrhoe", "Callirrhoe", "Easy-going", GeminiLiveVoiceGender.Female),
+    Autonoe("autonoe", "Autonoe", "Bright", GeminiLiveVoiceGender.Female),
+    Zephyr("zephyr", "Zephyr", "Bright", GeminiLiveVoiceGender.Female),
+    Puck("puck", "Puck", "Upbeat", GeminiLiveVoiceGender.Male),
+    Charon("charon", "Charon", "Informative", GeminiLiveVoiceGender.Male),
+    Fenrir("fenrir", "Fenrir", "Excitable", GeminiLiveVoiceGender.Male),
+    Orus("orus", "Orus", "Firm", GeminiLiveVoiceGender.Male),
+    Enceladus("enceladus", "Enceladus", "Breathy", GeminiLiveVoiceGender.Male),
+    Lapetus("lapetus", "Lapetus", "Clear", GeminiLiveVoiceGender.Male),
+    Umbriel("umbriel", "Umbriel", "Easy-going", GeminiLiveVoiceGender.Male),
+    Algieba("algieba", "Algieba", "Smooth", GeminiLiveVoiceGender.Male),
+    Despina("despina", "Despina", "Smooth", GeminiLiveVoiceGender.Female),
+    Erinome("erinome", "Erinome", "Clear", GeminiLiveVoiceGender.Female),
+    Laomedeia("laomedeia", "Laomedeia", "Upbeat", GeminiLiveVoiceGender.Female),
+    Achernar("achernar", "Achernar", "Soft", GeminiLiveVoiceGender.Male),
     Glow("glow", "Glow", "Smooth and natural."),
-    Puck("puck", "Puck", "Upbeat, energetic, and conversational."),
-    Charon("charon", "Charon", "Calm, reassuring, and professional."),
-    Fenrir("fenrir", "Fenrir", "Deep, slightly raspy, and conversational."),
-    Zephyr("zephyr", "Zephyr", "Smooth, clear, and relaxed."),
     Flare("flare", "Flare", "Dynamic and engaging.")
 }
 
@@ -612,6 +643,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val skillRepository = SkillRepository.get(application)
     private val geminiChatService = GeminiChatService(skillRepository)
     private val geminiLiveCallService = GeminiLiveCallService()
+    private val companionSettingsStore = CompanionSettingsStore(application)
     private val tavilyRepository = TavilyRepository()
     private val rule34ImageRepository = Rule34ImageRepository()
     private val elevenLabsTtsRepository = ElevenLabsTtsRepository()
@@ -651,7 +683,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var redMutableFloorHeld = false
     private var pendingTtsRequest: PendingTtsRequest? = null
     private var mediaPlayer: MediaPlayer? = null
-    private var voiceCallSessionId: String? = null
+    var voiceCallSessionId by mutableStateOf<String?>(null)
+        private set
     private var voiceCallModelMessageId: String? = null
     private var currentVoiceCallModelLineId: String? = null
     private var currentVoiceCallModelText = ""
@@ -798,6 +831,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val geminiLiveModelId: String = GeminiLiveCallService.DEFAULT_MODEL_ID
 
     var selectedGeminiLiveVoice by mutableStateOf(GeminiLiveVoice.Aoede)
+        private set
+
+    var voiceCallSelectedVoice by mutableStateOf(GeminiLiveVoice.Aoede)
         private set
 
     var voiceCallMuted by mutableStateOf(false)
@@ -2250,6 +2286,55 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         sessionDrawerVisible = false
     }
 
+    fun openCompanionCall() {
+        chatError = null
+        if (persona.vendor != ApiVendor.Google) {
+            chatError = "Companion calls need a Google-backed active persona. Your active persona was not changed."
+            return
+        }
+        voiceCallSelectedVoice = companionVoice(activeSessionId)
+        openVoiceCall(
+            companion = true,
+            vrmUri = companionSettingsStore.vrmUri(activeSessionId)
+        )
+    }
+
+    fun companionSystemPrompt(sessionId: String): String =
+        companionSettingsStore.systemPrompt(sessionId)
+
+    fun companionVoice(sessionId: String): GeminiLiveVoice =
+        GeminiLiveVoice.entries.firstOrNull {
+            it.id == companionSettingsStore.voiceId(sessionId) && it.gender != null
+        } ?: GeminiLiveVoice.Aoede
+
+    fun updateCompanionVoice(voice: GeminiLiveVoice) {
+        if (voice.gender == null) return
+        val sessionId = voiceCallSessionId ?: activeSessionId
+        companionSettingsStore.saveVoiceId(sessionId, voice.id)
+        voiceCallSelectedVoice = voice
+        if (voiceCallActive && voiceCallCompanionMode && voiceCallSessionId == sessionId) {
+            voiceCallResumeHandle = null
+            completeVoiceCallModelTurn()
+            startGeminiLiveCall()
+        }
+    }
+
+    fun updateCompanionVrm(uri: Uri?) {
+        val sessionId = voiceCallSessionId ?: activeSessionId
+        companionSettingsStore.saveVrmUri(sessionId, uri)
+        if (voiceCallCompanionMode && voiceCallSessionId == sessionId) voiceCallVrmUri = uri
+    }
+
+    fun updateCompanionSystemPrompt(prompt: String) {
+        val sessionId = voiceCallSessionId ?: activeSessionId
+        companionSettingsStore.saveSystemPrompt(sessionId, prompt)
+        if (voiceCallActive && voiceCallCompanionMode && voiceCallSessionId == sessionId) {
+            voiceCallResumeHandle = null
+            completeVoiceCallModelTurn()
+            startGeminiLiveCall()
+        }
+    }
+
     fun openVoiceCall(companion: Boolean = false, vrmUri: Uri? = null) {
         if (persona.vendor != ApiVendor.Google) {
             chatError = "Voice calls use Gemini only. Switch this persona to Google."
@@ -2375,7 +2460,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 preferences[geminiLiveVoiceKey] = voice.id
             }
         }
-        if (voiceCallActive) {
+        if (voiceCallActive && !voiceCallCompanionMode) {
             completeVoiceCallModelTurn()
             startGeminiLiveCall()
         }
@@ -2410,11 +2495,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 id = callMember.id,
                 persona = callMember.persona
             )
-            val systemInstruction = listOf(
-                masterSystemPrompt.takeIf { it.isNotBlank() },
-                skillRepository.combinedContent.takeIf { it.isNotBlank() },
-                personaEntity.systemPrompt
-            ).filterNotNull().joinToString("\n\n---\n\n")
+            val systemInstruction = composeGeminiLiveSystemInstruction(
+                masterPrompt = masterSystemPrompt,
+                skillContent = skillRepository.combinedContent,
+                personaPrompt = personaEntity.systemPrompt,
+                companionMode = voiceCallCompanionMode,
+                companionPrompt = companionSettingsStore.systemPrompt(callSessionId)
+            )
             val callSpeakerId = callMember.id
             val callSpeakerName = personaEntity.name
             geminiLiveCallService.onSessionResumeHandle = { handle ->
@@ -2436,7 +2523,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     apiKey = apiKey,
                     modelId = geminiLiveModelId,
                     systemInstruction = systemInstruction,
-                    voiceName = selectedGeminiLiveVoice.label,
+                    voiceName = (if (voiceCallCompanionMode) voiceCallSelectedVoice else selectedGeminiLiveVoice).label,
                     priorConversationContext = liveConversationContext(session),
                     resumeHandle = voiceCallResumeHandle
                 ),

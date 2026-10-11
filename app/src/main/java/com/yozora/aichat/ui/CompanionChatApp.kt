@@ -128,6 +128,7 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material.icons.rounded.VideocamOff
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -241,6 +242,7 @@ import com.yozora.aichat.ui.chat.ChatSession
 import com.yozora.aichat.ui.chat.ChatViewModel
 import com.yozora.aichat.ui.chat.CreateDraftState
 import com.yozora.aichat.ui.chat.GeminiLiveVoice
+import com.yozora.aichat.ui.companion.CompanionStage
 import com.yozora.aichat.ui.chat.GeminiThinkingEffort
 import com.yozora.aichat.ui.chat.GroupResponseMode
 import com.yozora.aichat.ui.chat.GroupMember
@@ -368,6 +370,10 @@ fun CompanionChatApp(
     var aboutDialogVisible by remember { mutableStateOf(false) }
     val appVersionLabel = "${viewModel.appNameChoice.label} v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
     var activeRoleplayTab by remember { mutableStateOf(RoleplayTab.Discover) }
+    var previousRoleplayTab by remember { mutableStateOf(RoleplayTab.Discover) }
+    var pendingCompanionCall by remember { mutableStateOf(false) }
+    var companionEntryError by remember { mutableStateOf<String?>(null) }
+    var companionSettingsVisible by remember { mutableStateOf(false) }
     var activeChatOpen by remember { mutableStateOf(false) }
     var pendingConfigExportSession by remember { mutableStateOf<ChatSession?>(null) }
     val onboardingAnchorRegistry = remember { OnboardingAnchorRegistry() }
@@ -426,10 +432,43 @@ fun CompanionChatApp(
     val voicePermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) {
+        if (pendingCompanionCall) {
+            pendingCompanionCall = false
+            if (granted) {
+                companionEntryError = null
+                viewModel.openCompanionCall()
+            } else {
+                companionEntryError = "Microphone access is needed for a Companion call. Allow it in app permissions, then tap Companion to try again."
+            }
+        } else if (granted) {
             viewModel.openVoiceCall()
         } else {
             viewModel.handleVoicePermissionDenied()
+        }
+    }
+    fun requestCompanionCall() {
+        if (viewModel.persona.vendor != ApiVendor.Google) {
+            companionEntryError = "Companion calls need a Google-backed active persona. Choose one outside Companion; your current persona will not be changed here."
+            return
+        }
+        companionEntryError = null
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            viewModel.openCompanionCall()
+        } else {
+            pendingCompanionCall = true
+            voicePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    fun closeActiveVoiceCall() {
+        val wasCompanionCall = viewModel.voiceCallCompanionMode
+        viewModel.closeVoiceCall()
+        if (wasCompanionCall) {
+            activeRoleplayTab = previousRoleplayTab
+            companionEntryError = null
         }
     }
     val cameraPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -490,28 +529,35 @@ fun CompanionChatApp(
     }
 
     if (viewModel.voiceCallActive) {
-        BackHandler(onBack = viewModel::closeVoiceCall)
+        BackHandler(onBack = ::closeActiveVoiceCall)
         VoiceCallScreen(
             persona = viewModel.persona,
             isOnline = viewModel.hasActiveApiKey,
             status = viewModel.voiceCallStatus,
             error = viewModel.voiceCallError,
             modelId = viewModel.geminiLiveModelId,
-            selectedVoice = viewModel.selectedGeminiLiveVoice,
+            selectedVoice = if (viewModel.voiceCallCompanionMode) viewModel.voiceCallSelectedVoice else viewModel.selectedGeminiLiveVoice,
             muted = viewModel.voiceCallMuted,
             videoEnabled = viewModel.voiceCallVideoEnabled,
             cameraFacing = viewModel.voiceCallCameraFacing,
             screenShareEnabled = viewModel.voiceCallScreenShareEnabled,
             companionMode = viewModel.voiceCallCompanionMode,
             vrmUri = viewModel.voiceCallVrmUri,
+            companionSessionId = viewModel.voiceCallSessionId ?: viewModel.activeSessionId,
+            companionPrompt = viewModel.companionSystemPrompt(viewModel.voiceCallSessionId ?: viewModel.activeSessionId),
+            onCompanionPromptSave = viewModel::updateCompanionSystemPrompt,
+            onCompanionVrmSelected = viewModel::updateCompanionVrm,
             audioEnvelope = viewModel.audioEnvelope,
             playbackHeadFrames = viewModel::voiceCallPlaybackHeadFrames,
             transcriptLines = viewModel.voiceCallTranscriptLines,
             onCameraFrame = viewModel::sendVoiceCallVideoFrame,
-            onBack = viewModel::closeVoiceCall,
-            onEndCall = viewModel::closeVoiceCall,
+            onBack = ::closeActiveVoiceCall,
+            onEndCall = ::closeActiveVoiceCall,
             onRetry = viewModel::retryVoiceCall,
-            onVoiceChange = viewModel::updateGeminiLiveVoice,
+            onVoiceChange = { voice ->
+                if (viewModel.voiceCallCompanionMode) viewModel.updateCompanionVoice(voice)
+                else viewModel.updateGeminiLiveVoice(voice)
+            },
             onToggleMute = viewModel::toggleVoiceCallMute,
             onToggleVideo = {
                 if (viewModel.voiceCallVideoEnabled) {
@@ -622,10 +668,27 @@ fun CompanionChatApp(
                 RoleplayHubLayout(
                     viewModel = viewModel,
                     activeTab = activeRoleplayTab,
-                    onTabChange = { activeRoleplayTab = it },
+                    onTabChange = { tab ->
+                        if (tab == RoleplayTab.Companion) {
+                            if (activeRoleplayTab != RoleplayTab.Companion) previousRoleplayTab = activeRoleplayTab
+                            activeRoleplayTab = RoleplayTab.Companion
+                            requestCompanionCall()
+                        } else {
+                            activeRoleplayTab = tab
+                            companionEntryError = null
+                        }
+                    },
                     onOpenChat = { activeChatOpen = true },
                     onImportSession = { importLauncher.launch(arrayOf("application/octet-stream")) },
-                    onImportConfig = { importConfigLauncher.launch(arrayOf("application/octet-stream")) }
+                    onImportConfig = { importConfigLauncher.launch(arrayOf("application/octet-stream")) },
+                    companionEntryError = companionEntryError ?: viewModel.chatError,
+                    companionSettingsVisible = companionSettingsVisible,
+                    onCompanionSettingsOpen = { companionSettingsVisible = true },
+                    onCompanionSettingsDismiss = { companionSettingsVisible = false },
+                    onCompanionPromptSave = viewModel::updateCompanionSystemPrompt,
+                    onCompanionVrmSelected = viewModel::updateCompanionVrm,
+                    onCompanionVoiceSelected = viewModel::updateCompanionVoice,
+                    onCompanionRetry = ::requestCompanionCall,
                 )
             }
         } else {
@@ -1579,6 +1642,10 @@ private fun VoiceCallScreen(
     screenShareEnabled: Boolean,
     companionMode: Boolean = false,
     vrmUri: android.net.Uri? = null,
+    companionSessionId: String = "",
+    companionPrompt: String = "",
+    onCompanionPromptSave: (String) -> Unit = {},
+    onCompanionVrmSelected: (android.net.Uri) -> Unit = {},
     audioEnvelope: com.yozora.aichat.companion.AudioEnvelope? = null,
     playbackHeadFrames: () -> Long = { 0L },
     transcriptLines: List<LiveCallTranscriptLine>,
@@ -1604,6 +1671,37 @@ private fun VoiceCallScreen(
             elapsedSeconds = (System.currentTimeMillis() - startedAt) / 1000L
             delay(1000L)
         }
+    }
+
+    if (companionMode) {
+        CompanionCallExperience(
+            persona = persona,
+            status = status,
+            error = error,
+            modelId = modelId,
+            selectedVoice = selectedVoice,
+            muted = muted,
+            vrmUri = vrmUri,
+            sessionId = companionSessionId,
+            prompt = companionPrompt,
+            elapsedSeconds = elapsedSeconds,
+            transcriptLines = transcriptLines,
+            audioEnvelope = audioEnvelope,
+            playbackHeadFrames = playbackHeadFrames,
+            onPromptSave = onCompanionPromptSave,
+            onVrmSelected = onCompanionVrmSelected,
+            onVoiceChange = onVoiceChange,
+            onBack = onBack,
+            onEndCall = onEndCall,
+            onRetry = onRetry,
+            videoEnabled = videoEnabled,
+            cameraFacing = cameraFacing,
+            onCameraFrame = onCameraFrame,
+            onToggleMute = onToggleMute,
+            onToggleVideo = onToggleVideo,
+            onSwitchCamera = onSwitchCamera,
+        )
+        return
     }
 
     Box(
@@ -2094,6 +2192,65 @@ private fun LiveCameraPreview(
     )
 }
 
+@Composable
+private fun LiveCameraCapture(
+    cameraFacing: VoiceCallCameraFacing,
+    onFrame: (ByteArray) -> Unit,
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val currentOnFrame by rememberUpdatedState(onFrame)
+
+    DisposableEffect(lifecycleOwner, cameraFacing) {
+        val analysisExecutor = Executors.newSingleThreadExecutor()
+        val providerFuture = ProcessCameraProvider.getInstance(context)
+        val mainExecutor = ContextCompat.getMainExecutor(context)
+        var provider: ProcessCameraProvider? = null
+        var analysisUseCase: ImageAnalysis? = null
+        var disposed = false
+        var lastFrameAt = 0L
+
+        providerFuture.addListener({
+            if (disposed) return@addListener
+            provider = runCatching { providerFuture.get() }.getOrNull()
+            val cameraProvider = provider ?: return@addListener
+            val analysis = ImageAnalysis.Builder()
+                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
+                .also { useCase ->
+                    useCase.setAnalyzer(analysisExecutor) { image ->
+                        val now = System.currentTimeMillis()
+                        try {
+                            if (now - lastFrameAt >= 1_000L) {
+                                lastFrameAt = now
+                                cameraImageToJpeg(image)?.let(currentOnFrame)
+                            }
+                        } finally {
+                            image.close()
+                        }
+                    }
+                }
+            analysisUseCase = analysis
+            runCatching {
+                val selector = when (cameraFacing) {
+                    VoiceCallCameraFacing.Front -> CameraSelector.DEFAULT_FRONT_CAMERA
+                    VoiceCallCameraFacing.Back -> CameraSelector.DEFAULT_BACK_CAMERA
+                }
+                cameraProvider.bindToLifecycle(lifecycleOwner, selector, analysis)
+            }.onFailure {
+                runCatching { cameraProvider.unbind(analysis) }
+            }
+        }, mainExecutor)
+
+        onDispose {
+            disposed = true
+            analysisUseCase?.let { useCase -> runCatching { provider?.unbind(useCase) } }
+            analysisExecutor.shutdownNow()
+        }
+    }
+}
+
 private fun cameraImageToJpeg(image: androidx.camera.core.ImageProxy): ByteArray? {
     val plane = image.planes.firstOrNull() ?: return null
     val width = image.width
@@ -2123,6 +2280,222 @@ private fun cameraImageToJpeg(image: androidx.camera.core.ImageProxy): ByteArray
         rotated.recycle()
         output.toByteArray()
     }
+}
+
+@Composable
+private fun CompanionCallExperience(
+    persona: PersonaUiState,
+    status: String,
+    error: String?,
+    modelId: String,
+    selectedVoice: GeminiLiveVoice,
+    muted: Boolean,
+    vrmUri: android.net.Uri?,
+    sessionId: String,
+    prompt: String,
+    elapsedSeconds: Long,
+    transcriptLines: List<LiveCallTranscriptLine>,
+    audioEnvelope: com.yozora.aichat.companion.AudioEnvelope?,
+    playbackHeadFrames: () -> Long,
+    onPromptSave: (String) -> Unit,
+    onVrmSelected: (android.net.Uri) -> Unit,
+    onVoiceChange: (GeminiLiveVoice) -> Unit,
+    onBack: () -> Unit,
+    onEndCall: () -> Unit,
+    onRetry: () -> Unit,
+    videoEnabled: Boolean,
+    cameraFacing: VoiceCallCameraFacing,
+    onCameraFrame: (ByteArray) -> Unit,
+    onToggleMute: () -> Unit,
+    onToggleVideo: () -> Unit,
+    onSwitchCamera: () -> Unit,
+) {
+    var settingsVisible by remember(sessionId) { mutableStateOf(false) }
+    val latestLine = transcriptLines.lastOrNull()
+    val interactionKey = latestLine?.let { "react:${it.role}:${it.id}" }
+    var mouthAa by remember { mutableStateOf(0f) }
+    var modelError by remember(vrmUri) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(audioEnvelope) {
+        var lastTime = System.currentTimeMillis()
+        while (true) {
+            val now = System.currentTimeMillis()
+            val dt = (now - lastTime).toFloat()
+            lastTime = now
+            mouthAa = audioEnvelope?.mouthAt(playbackHeadFrames(), dt) ?: 0f
+            delay(33L)
+        }
+    }
+
+    if (videoEnabled) {
+        LiveCameraCapture(cameraFacing = cameraFacing, onFrame = onCameraFrame)
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF090B12))) {
+        CompanionStage(
+            modifier = Modifier.fillMaxSize(),
+            vrmUri = vrmUri,
+            mouthAa = mouthAa,
+            speaking = status == "Speaking...",
+            interactionKey = interactionKey,
+            onError = { modelError = it },
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.43f),
+                        0.18f to Color.Transparent,
+                        0.62f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.6f),
+                    )
+                )
+        )
+
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(start = 8.dp, end = 10.dp, top = 4.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = Color.White)
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = persona.displayName.ifBlank { "Companion" },
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "$status  ·  ${formatCallDuration(elapsedSeconds)}",
+                    color = Color.White.copy(alpha = 0.78f),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                IconButton(onClick = { settingsVisible = true }) {
+                    Icon(Icons.Rounded.Settings, contentDescription = "Companion settings", tint = Color.White)
+                }
+                if (videoEnabled) {
+                    Surface(
+                        color = Color(0xC817131F),
+                        shape = RoundedCornerShape(999.dp),
+                        modifier = Modifier
+                            .clickable(onClick = onSwitchCamera)
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Rounded.Refresh,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Text(
+                                text = if (cameraFacing == VoiceCallCameraFacing.Front) "Front camera" else "Back camera",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (latestLine != null || !error.isNullOrBlank() || !modelError.isNullOrBlank()) {
+            Surface(
+                color = Color(0xB917131F),
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 132.dp),
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    val visibleError = error ?: modelError
+                    if (!visibleError.isNullOrBlank()) {
+                        Text(
+                            text = visibleError,
+                            color = Color(0xFFFFB8C1),
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp,
+                        )
+                        TextButton(
+                            onClick = if (!error.isNullOrBlank()) onRetry else ({ settingsVisible = true }),
+                        ) {
+                            Text(
+                                if (!error.isNullOrBlank()) "Reconnect" else "Change model",
+                                color = Color.White,
+                            )
+                        }
+                    } else if (latestLine != null) {
+                        Text(
+                            text = latestLine.text,
+                            color = Color.White.copy(alpha = 0.92f),
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 22.dp),
+            horizontalArrangement = Arrangement.spacedBy(22.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            VoiceControlButton(
+                icon = if (muted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
+                label = if (muted) "Unmute" else "Mute",
+                selected = muted,
+                onClick = onToggleMute,
+            )
+            VoiceControlButton(
+                icon = if (videoEnabled) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff,
+                label = if (videoEnabled) "Camera on" else "Camera",
+                selected = videoEnabled,
+                onClick = onToggleVideo,
+            )
+            VoiceControlButton(
+                icon = Icons.Rounded.CallEnd,
+                label = "End call",
+                danger = true,
+                onClick = onEndCall,
+            )
+        }
+    }
+
+    CompanionSettingsDialog(
+        visible = settingsVisible,
+        currentPrompt = prompt,
+        currentVrmUri = vrmUri,
+        selectedVoice = selectedVoice,
+        onDismiss = { settingsVisible = false },
+        onSavePrompt = onPromptSave,
+        onVrmSelected = onVrmSelected,
+        onVoiceSelected = onVoiceChange,
+    )
 }
 
 @Composable
@@ -9384,7 +9757,15 @@ private fun RoleplayHubLayout(
     onTabChange: (RoleplayTab) -> Unit,
     onOpenChat: () -> Unit,
     onImportSession: () -> Unit,
-    onImportConfig: () -> Unit
+    onImportConfig: () -> Unit,
+    companionEntryError: String?,
+    companionSettingsVisible: Boolean,
+    onCompanionSettingsOpen: () -> Unit,
+    onCompanionSettingsDismiss: () -> Unit,
+    onCompanionPromptSave: (String) -> Unit,
+    onCompanionVrmSelected: (android.net.Uri) -> Unit,
+    onCompanionVoiceSelected: (GeminiLiveVoice) -> Unit,
+    onCompanionRetry: () -> Unit,
 ) {
     val genderAccent = when (viewModel.userProfileGender) {
         "female" -> Color(0xFFF858A3)
@@ -9455,7 +9836,14 @@ private fun RoleplayHubLayout(
                     RoleplayTab.Companion -> {
                         CompanionHubScreen(
                             viewModel = viewModel,
-                            onNavigateToCreate = { onTabChange(RoleplayTab.Create) }
+                            entryError = companionEntryError,
+                            settingsVisible = companionSettingsVisible,
+                            onSettingsClick = onCompanionSettingsOpen,
+                            onSettingsDismiss = onCompanionSettingsDismiss,
+                            onPromptSave = onCompanionPromptSave,
+                            onVrmSelected = onCompanionVrmSelected,
+                            onVoiceSelected = onCompanionVoiceSelected,
+                            onRetry = onCompanionRetry,
                         )
                     }
                 }

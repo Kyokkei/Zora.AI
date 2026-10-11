@@ -1,427 +1,272 @@
-﻿package com.yozora.aichat.ui
+package com.yozora.aichat.ui
 
-import android.content.Context
 import android.net.Uri
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.rounded.CallEnd
-import androidx.compose.material.icons.rounded.Mic
-import androidx.compose.material.icons.rounded.MicOff
-import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.ui.window.Dialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import com.yozora.aichat.R
 import com.yozora.aichat.ui.chat.ChatViewModel
 import com.yozora.aichat.ui.chat.GeminiLiveVoice
+import com.yozora.aichat.ui.chat.GeminiLiveVoiceGender
+import com.yozora.aichat.ui.companion.CompanionSettingsStore
 import com.yozora.aichat.ui.companion.CompanionStage
 import com.yozora.aichat.ui.companion.VrmPicker
-import kotlinx.coroutines.delay
-
-private data class CompanionCharacter(
-    val sessionId: String,
-    val name: String,
-    val avatarUri: String?,
-    val isGoogle: Boolean,
-)
-
-@Composable
-private fun rememberCompanionCharacters(viewModel: ChatViewModel): List<CompanionCharacter> {
-    val sessions = viewModel.sessions
-    return remember(sessions) {
-        sessions
-            .filter { session -> session.members.any { it.persona.displayName.isNotBlank() } }
-            .map { session ->
-                val member = session.members.first { it.persona.displayName.isNotBlank() }
-                val persona = member.persona
-                CompanionCharacter(
-                    sessionId = session.id,
-                    name = persona.displayName,
-                    avatarUri = session.headerAvatarUri?.toString() ?: persona.avatarUri?.toString(),
-                    isGoogle = persona.vendor.id == "google",
-                )
-            }
-    }
-}
 
 @Composable
 internal fun CompanionHubScreen(
     viewModel: ChatViewModel,
-    onNavigateToCreate: () -> Unit,
+    entryError: String?,
+    settingsVisible: Boolean,
+    onSettingsClick: () -> Unit,
+    onSettingsDismiss: () -> Unit,
+    onPromptSave: (String) -> Unit,
+    onVrmSelected: (Uri) -> Unit,
+    onVoiceSelected: (GeminiLiveVoice) -> Unit,
+    onRetry: () -> Unit,
 ) {
     val context = LocalContext.current
-    val prefs = remember(context) { context.getSharedPreferences("companion_vrm_prefs", Context.MODE_PRIVATE) }
+    val sessionId = viewModel.activeSessionId
+    val settings = remember(context) { CompanionSettingsStore(context) }
     val colors = LocalRoleplayColors.current
-    val characters = rememberCompanionCharacters(viewModel)
+    var selectedVrmUri by remember(sessionId) { mutableStateOf(settings.vrmUri(sessionId)) }
+    var selectedVoice by remember(sessionId) { mutableStateOf(viewModel.companionVoice(sessionId)) }
 
-    var selectedIndex by rememberSaveable { mutableStateOf(0) }
-    val safeIndex = selectedIndex.coerceIn(0, (characters.size - 1).coerceAtLeast(0))
-    val selected = characters.getOrNull(safeIndex)
-    val canStart = selected?.isGoogle == true
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF090B12))) {
+        CompanionStage(
+            modifier = Modifier.fillMaxSize(),
+            vrmUri = selectedVrmUri,
+            mouthAa = 0f,
+        )
 
-    // Persistent VRM per character session
-    var selectedVrmUri by remember(selected?.sessionId) {
-        val saved = selected?.sessionId?.let { prefs.getString("vrm_$it", null) }
-        mutableStateOf(saved?.let { Uri.parse(it) })
-    }
-    var vrmError by remember { mutableStateOf<String?>(null) }
-
-    val voices = GeminiLiveVoice.entries
-    val selectedVoice = viewModel.selectedGeminiLiveVoice
-
-    // Lip-sync calculation when call is active
-    val isCallActive = viewModel.voiceCallActive && viewModel.voiceCallCompanionMode
-    var mouthAa by remember { mutableStateOf(0f) }
-    LaunchedEffect(isCallActive) {
-        if (isCallActive) {
-            var lastTime = System.currentTimeMillis()
-            while (true) {
-                val now = System.currentTimeMillis()
-                val dt = (now - lastTime).toFloat()
-                lastTime = now
-                val head = viewModel.voiceCallPlaybackHeadFrames()
-                mouthAa = viewModel.audioEnvelope.mouthAt(head, dt)
-                delay(33L)
-            }
-        } else {
-            mouthAa = 0f
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 32.dp),
-    ) {
-        // Character Carousel at Top
-        if (characters.isEmpty()) {
-            EmptyCharactersState(colors = colors, onNavigateToCreate = onNavigateToCreate)
-        } else {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                itemsIndexed(characters) { index, char ->
-                    CompanionCharacterCard(
-                        character = char,
-                        selected = index == safeIndex,
-                        colors = colors,
-                        onClick = {
-                            selectedIndex = index
-                        },
-                    )
-                }
-            }
-        }
-
-        // 3D VRM Stage (Grok Ani style: visible directly on the tab!)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(340.dp)
-                .padding(horizontal = 16.dp)
-                .clip(RoundedCornerShape(24.dp))
-                .background(colors.accent.copy(alpha = 0.04f))
-                .border(1.dp, colors.accent.copy(alpha = 0.15f), RoundedCornerShape(24.dp)),
-            contentAlignment = Alignment.Center,
+        IconButton(
+            onClick = onSettingsClick,
+            modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
         ) {
-            CompanionStage(
-                modifier = Modifier.fillMaxSize(),
-                vrmUri = selectedVrmUri,
-                mouthAa = mouthAa,
-                onError = { vrmError = it }
+            Icon(
+                imageVector = Icons.Rounded.Settings,
+                contentDescription = "Companion settings",
+                tint = Color.White,
+                modifier = Modifier.size(24.dp),
             )
+        }
 
-            // Status chip overlay at top-start
-            if (isCallActive) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(12.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(colors.accent.copy(alpha = 0.85f))
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+        if (!entryError.isNullOrBlank()) {
+            Surface(
+                color = Color(0xD917131F),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 22.dp, vertical = 28.dp),
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = viewModel.voiceCallStatus,
+                        text = "Companion isn’t ready",
                         color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
                     )
+                    Text(
+                        text = entryError,
+                        color = Color.White.copy(alpha = 0.78f),
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                    )
+                    TextButton(onClick = onRetry) {
+                        Text("Try again", color = colors.accent, fontWeight = FontWeight.Medium)
+                    }
                 }
             }
         }
+    }
 
-        // Settings & Action Controls
-        if (selected != null) {
-            Spacer(Modifier.height(16.dp))
+    CompanionSettingsDialog(
+        visible = settingsVisible,
+        currentPrompt = viewModel.companionSystemPrompt(sessionId),
+        currentVrmUri = selectedVrmUri,
+        selectedVoice = selectedVoice,
+        onDismiss = onSettingsDismiss,
+        onSavePrompt = onPromptSave,
+        onVrmSelected = { uri ->
+            selectedVrmUri = uri
+            onVrmSelected(uri)
+        },
+        onVoiceSelected = { voice ->
+            selectedVoice = voice
+            onVoiceSelected(voice)
+        },
+    )
+}
 
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+@Composable
+internal fun CompanionSettingsDialog(
+    visible: Boolean,
+    currentPrompt: String,
+    currentVrmUri: Uri?,
+    selectedVoice: GeminiLiveVoice,
+    onDismiss: () -> Unit,
+    onSavePrompt: (String) -> Unit,
+    onVrmSelected: (Uri) -> Unit,
+    onVoiceSelected: (GeminiLiveVoice) -> Unit,
+) {
+    if (!visible) return
+
+    var prompt by remember(visible, currentPrompt) { mutableStateOf(currentPrompt) }
+    val colors = LocalRoleplayColors.current
+    val panelShape = RoundedCornerShape(26.dp)
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            color = Color(0xFF17131F),
+            shape = panelShape,
+            modifier = Modifier.fillMaxWidth().heightIn(max = 680.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 22.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Text(
-                    text = selected.name,
-                    color = colors.onSurface,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
+                    text = "Companion settings",
+                    color = Color.White,
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "These instructions apply only during Companion calls. Your persona and regular chats stay unchanged.",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
                 )
 
-                // VRM Choose / Change button
-                VrmPicker(
-                    onVrmSelected = { uri ->
-                        selectedVrmUri = uri
-                        vrmError = null
-                        selected.sessionId.let {
-                            prefs.edit().putString("vrm_$it", uri.toString()).apply()
-                        }
-                    },
-                    onError = { vrmError = it },
-                ) {
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Companion system prompt") },
+                    minLines = 4,
+                    maxLines = 8,
+                    shape = RoundedCornerShape(16.dp),
+                )
+
+                Text(
+                    text = "3D model",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = if (selectedVrmUri != null) "Change 3D" else "Pick 3D VRM",
+                        text = currentVrmUri?.lastPathSegment ?: "No VRM selected",
+                        color = Color.White.copy(alpha = 0.68f),
                         fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
+                    VrmPicker(onVrmSelected = onVrmSelected) {
+                        Text(if (currentVrmUri == null) "Choose VRM" else "Change")
+                    }
                 }
-            }
 
-            if (!selected.isGoogle) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = stringResource(R.string.companion_not_google_hint),
-                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.75f),
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                )
-            }
-
-            vrmError?.let { err ->
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = err,
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 24.dp)
-                )
-            }
-
-            // Voice selection chips
-            Spacer(Modifier.height(14.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
                 Text(
                     text = "Voice",
-                    color = colors.onSurface.copy(alpha = 0.7f),
-                    fontSize = 13.sp,
-                    modifier = Modifier.width(48.dp)
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
                 )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(voices) { voice ->
-                        val isSelected = voice == selectedVoice
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = { viewModel.updateGeminiLiveVoice(voice) },
-                            label = { Text(voice.label, fontSize = 12.sp, maxLines = 1) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = colors.accent.copy(alpha = 0.18f),
-                                selectedLabelColor = colors.accent,
-                            ),
-                        )
-                    }
-                }
-            }
-
-            // Call Action Buttons (Call / End / Mute)
-            Spacer(Modifier.height(20.dp))
-            if (isCallActive) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(
-                        onClick = viewModel::toggleVoiceCallMute,
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        shape = RoundedCornerShape(25.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (viewModel.voiceCallMuted) colors.accent.copy(alpha = 0.2f) else colors.accent.copy(alpha = 0.12f),
-                            contentColor = colors.onSurface
-                        )
-                    ) {
-                        Icon(
-                            imageVector = if (viewModel.voiceCallMuted) Icons.Rounded.MicOff else Icons.Rounded.Mic,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (viewModel.voiceCallMuted) "Unmute" else "Mute", fontSize = 14.sp)
-                    }
-
-                    Button(
-                        onClick = viewModel::closeVoiceCall,
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        shape = RoundedCornerShape(25.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error,
-                            contentColor = Color.White
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.CallEnd,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("End Call", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            } else {
-                Button(
-                    onClick = {
-                        viewModel.selectSession(selected.sessionId)
-                        viewModel.openVoiceCall(companion = true, vrmUri = selectedVrmUri)
-                    },
-                    enabled = canStart,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
-                        .padding(horizontal = 24.dp),
-                    shape = RoundedCornerShape(26.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.accent,
-                        disabledContainerColor = colors.onSurface.copy(alpha = 0.12f),
-                    ),
-                ) {
-                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
+                if (selectedVoice.gender == null) {
                     Text(
-                        stringResource(R.string.companion_start_call),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold
+                        text = "Current voice: ${selectedVoice.label}. It isn’t categorized yet; choose a verified voice below to switch.",
+                        color = Color.White.copy(alpha = 0.66f),
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
                     )
                 }
-            }
-        }
-    }
-}
+                GeminiLiveVoiceGender.entries.forEach { gender ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = gender.name,
+                            color = colors.accent,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            GeminiLiveVoice.entries.filter { it.gender == gender }.forEach { voice ->
+                                FilterChip(
+                                    selected = selectedVoice == voice,
+                                    onClick = { onVoiceSelected(voice) },
+                                    label = { Text(voice.label, maxLines = 1, fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = colors.accent.copy(alpha = 0.2f),
+                                        selectedLabelColor = colors.accent,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                }
 
-@Composable
-private fun CompanionCharacterCard(
-    character: CompanionCharacter,
-    selected: Boolean,
-    colors: RoleplayColors,
-    onClick: () -> Unit,
-) {
-    val cardShape = RoundedCornerShape(16.dp)
-    Column(
-        modifier = Modifier
-            .width(88.dp)
-            .clip(cardShape)
-            .background(colors.accent.copy(alpha = if (selected) 0.12f else 0.05f))
-            .border(
-                if (selected) 1.5.dp else 0.75.dp,
-                if (selected) colors.accent else colors.onSurface.copy(alpha = 0.12f),
-                cardShape
-            )
-            .clickable(onClick = onClick)
-            .padding(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            modifier = Modifier.size(50.dp).clip(CircleShape).background(colors.onSurface.copy(alpha = 0.08f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (character.avatarUri != null) {
-                AsyncImage(model = character.avatarUri, contentDescription = character.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            } else {
-                Icon(Icons.Default.Person, contentDescription = null, tint = colors.onSurface.copy(alpha = 0.4f), modifier = Modifier.size(26.dp))
+                Spacer(Modifier.height(2.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Button(
+                        onClick = { onSavePrompt(prompt); onDismiss() },
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.accent),
+                    ) {
+                        Text("Save prompt", color = Color.White)
+                    }
+                }
             }
-            if (!character.isGoogle) {
-                Box(
-                    modifier = Modifier.align(Alignment.BottomEnd).size(16.dp).clip(CircleShape).background(MaterialTheme.colorScheme.errorContainer),
-                    contentAlignment = Alignment.Center,
-                ) { Text("🔒", fontSize = 8.sp) }
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = character.name,
-            color = if (character.isGoogle) colors.onSurface else colors.onSurface.copy(alpha = 0.45f),
-            fontSize = 11.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-        )
-    }
-}
-
-@Composable
-private fun EmptyCharactersState(colors: RoleplayColors, onNavigateToCreate: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(Icons.Default.Person, contentDescription = null, tint = colors.onSurface.copy(alpha = 0.2f), modifier = Modifier.size(64.dp))
-        Spacer(Modifier.height(16.dp))
-        Text(stringResource(R.string.companion_no_characters), color = colors.onSurface.copy(alpha = 0.5f), fontSize = 14.sp, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(16.dp))
-        TextButton(onClick = onNavigateToCreate) {
-            Text("Create a character →", color = colors.accent, fontWeight = FontWeight.SemiBold)
         }
     }
 }

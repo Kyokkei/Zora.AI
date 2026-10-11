@@ -5,6 +5,7 @@ import {
   VRMLoaderPlugin,
   VRMUtils,
   type VRM,
+  type VRMPose,
 } from '@pixiv/three-vrm';
 
 type EmotionName = 'happy' | 'sad' | 'angry' | 'relaxed' | 'surprised' | 'neutral';
@@ -15,6 +16,8 @@ type CompanionApi = {
   setMouth(aa: number, ih: number, ou: number, ee: number, oh: number): void;
   setEmotion(name: EmotionName, weight: number): void;
   setSpeaking(speaking: boolean): void;
+  wave(): void;
+  react(): void;
   pause(): void;
   resume(): void;
   dispose(): void;
@@ -43,6 +46,10 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setClearAlpha(0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 root.appendChild(renderer.domElement);
+renderer.domElement.addEventListener('pointerup', () => {
+  react();
+  wave();
+});
 
 // Studio Lighting matching PC test bench
 scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 2.0));
@@ -68,6 +75,8 @@ let rafId = 0;
 let running = false;
 let disposed = false;
 let speaking = false;
+let waveStartedAt = 0;
+let reactionStartedAt = 0;
 let mouthTarget: MouthValues = [0, 0, 0, 0, 0];
 const mouthCurrent: MouthValues = [0, 0, 0, 0, 0];
 let emotion: EmotionName = 'neutral';
@@ -75,22 +84,20 @@ let emotionWeight = 0;
 let blinkUntil = 0;
 let nextBlinkAt = performance.now() + 4000;
 let previousFrameAt = performance.now();
-
-// Humanoid Raw Bones
-let headBone: THREE.Object3D | null = null;
+let humanoid: VRM['humanoid'] | null = null;
+let normalizedRestPose: VRMPose | null = null;
+let animatedPose: VRMPose | null = null;
 let chestBone: THREE.Object3D | null = null;
-let rawLeftUpperArm: THREE.Object3D | null = null;
-let rawRightUpperArm: THREE.Object3D | null = null;
-let rawLeftLowerArm: THREE.Object3D | null = null;
-let rawRightLowerArm: THREE.Object3D | null = null;
-
-let headBaseRotation = new THREE.Euler();
-let chestBaseScale = new THREE.Vector3(1, 1, 1);
-
-// Natural Resting Pose Angles (verified from PC test bench)
-const targetArmZ = 1.30;
-const targetArmForwardX = 0.15;
-const targetElbowY = 0.00;
+const chestBaseScale = new THREE.Vector3(1, 1, 1);
+const upAxis = new THREE.Vector3(0, 0, 1);
+const horizontalAxis = new THREE.Vector3(1, 0, 0);
+const rightFingerBones: Array<keyof VRMPose> = [
+  'rightThumbProximal',
+  'rightIndexProximal',
+  'rightMiddleProximal',
+  'rightRingProximal',
+  'rightLittleProximal',
+];
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 const randomBlinkDelay = (): number => 3000 + Math.random() * 2000;
@@ -101,6 +108,7 @@ function resize(): void {
   renderer.setSize(width, height, true);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
+  if (currentVrm) frameModel();
 }
 
 function clearCurrentVrm(): void {
@@ -108,63 +116,89 @@ function clearCurrentVrm(): void {
   scene.remove(currentVrm.scene);
   VRMUtils.deepDispose(currentVrm.scene);
   currentVrm = null;
-  headBone = null;
+  humanoid = null;
+  normalizedRestPose = null;
+  animatedPose = null;
   chestBone = null;
-  rawLeftUpperArm = null;
-  rawRightUpperArm = null;
-  rawLeftLowerArm = null;
-  rawRightLowerArm = null;
 }
 
-function applyPoseDirect(): void {
-  if (rawLeftUpperArm) {
-    rawLeftUpperArm.rotation.set(targetArmForwardX, 0, targetArmZ);
-  }
-  if (rawRightUpperArm) {
-    rawRightUpperArm.rotation.set(targetArmForwardX, 0, -targetArmZ);
-  }
-  if (rawLeftLowerArm) {
-    rawLeftLowerArm.rotation.set(0, targetElbowY, 0);
-  }
-  if (rawRightLowerArm) {
-    rawRightLowerArm.rotation.set(0, -targetElbowY, 0);
-  }
+function clonePose(pose: VRMPose): VRMPose {
+  return Object.fromEntries(
+    Object.entries(pose).map(([boneName, transform]) => [
+      boneName,
+      {
+        ...transform,
+        ...(transform?.position ? { position: [...transform.position] } : {}),
+        ...(transform?.rotation ? { rotation: [...transform.rotation] } : {}),
+      },
+    ]),
+  ) as VRMPose;
+}
+
+const poseEuler = new THREE.Euler();
+const poseOffset = new THREE.Quaternion();
+const poseRotation = new THREE.Quaternion();
+
+function writePoseEuler(
+  pose: VRMPose,
+  restPose: VRMPose,
+  boneName: keyof VRMPose,
+  x: number,
+  y: number,
+  z: number,
+): void {
+  const baseRotation = restPose[boneName]?.rotation;
+  const transform = pose[boneName];
+  if (!baseRotation || !transform) return;
+  poseEuler.set(x, y, z, 'XYZ');
+  poseOffset.setFromEuler(poseEuler);
+  poseRotation.set(...baseRotation).multiply(poseOffset);
+  transform.rotation = [poseRotation.x, poseRotation.y, poseRotation.z, poseRotation.w];
+}
+
+function smoothStep(start: number, end: number, value: number): number {
+  const t = clamp01((value - start) / (end - start));
+  return t * t * (3 - 2 * t);
 }
 
 function frameModel(): void {
-  const headPos = headBone ? headBone.getWorldPosition(new THREE.Vector3()) : new THREE.Vector3(0, 1.35, 0);
-  controls.target.set(headPos.x, headPos.y - 0.15, headPos.z);
-  // Match PC test bench Grok Ani bust framing
-  camera.position.set(headPos.x, headPos.y - 0.05, headPos.z + 1.25);
-  camera.near = 0.1;
-  camera.far = 50.0;
+  const bounds = new THREE.Box3().setFromObject(currentVrm?.scene ?? new THREE.Group());
+  if (bounds.isEmpty()) return;
+  const size = bounds.getSize(new THREE.Vector3());
+  const center = bounds.getCenter(new THREE.Vector3());
+  const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+  const aspect = Math.max(0.35, camera.aspect);
+  const verticalDistance = (size.y * 0.52) / Math.tan(verticalFov / 2);
+  const horizontalDistance = (size.x * 0.52) / (Math.tan(verticalFov / 2) * aspect);
+  const distance = Math.max(1.2, verticalDistance, horizontalDistance);
+  controls.target.set(center.x, bounds.min.y + size.y * 0.53, center.z);
+  camera.position.set(controls.target.x, controls.target.y, controls.target.z + distance);
+  camera.near = Math.max(0.01, distance / 100);
+  camera.far = Math.max(50, distance * 10);
   camera.updateProjectionMatrix();
   controls.update();
 }
 
 function findBones(vrm: VRM): void {
-  const humanoid = vrm.humanoid;
+  humanoid = vrm.humanoid;
   if (!humanoid) return;
 
-  // CRITICAL: Disable autoUpdateHumanBones so VRMHumanoid doesn't overwrite raw bones with T-pose every frame!
-  humanoid.autoUpdateHumanBones = false;
-
-  headBone = humanoid.getRawBoneNode('head') ?? humanoid.getNormalizedBoneNode('head') ?? null;
+  humanoid.autoUpdateHumanBones = true;
+  normalizedRestPose = clonePose(humanoid.getNormalizedPose());
+  animatedPose = clonePose(normalizedRestPose);
   chestBone = humanoid.getRawBoneNode('chest')
     ?? humanoid.getRawBoneNode('upperChest')
-    ?? humanoid.getNormalizedBoneNode('chest')
-    ?? humanoid.getNormalizedBoneNode('upperChest')
     ?? null;
-
-  rawLeftUpperArm = humanoid.getRawBoneNode('leftUpperArm') ?? null;
-  rawRightUpperArm = humanoid.getRawBoneNode('rightUpperArm') ?? null;
-  rawLeftLowerArm = humanoid.getRawBoneNode('leftLowerArm') ?? null;
-  rawRightLowerArm = humanoid.getRawBoneNode('rightLowerArm') ?? null;
-
-  if (headBone) headBaseRotation.copy(headBone.rotation);
   if (chestBone) chestBaseScale.copy(chestBone.scale);
+}
 
-  applyPoseDirect();
+function wave(): void {
+  waveStartedAt = performance.now();
+  reactionStartedAt = waveStartedAt;
+}
+
+function react(): void {
+  reactionStartedAt = performance.now();
 }
 
 function applyEmotion(): void {
@@ -204,31 +238,61 @@ function animate(now: number): void {
     manager.setValue('oh', mouthCurrent[4]);
   }
 
-  // Idle head drift
-  if (headBone) {
-    headBone.rotation.x = headBaseRotation.x + Math.sin(now * 0.00055) * 0.018;
-    headBone.rotation.y = headBaseRotation.y + Math.sin(now * 0.00031) * 0.028;
-  }
-  // Breathing scale
-  if (chestBone) {
-    const breath = speaking ? 0.006 : 0.012;
-    const scaleY = chestBaseScale.y * (1 + Math.sin(now * 0.0018) * breath);
-    chestBone.scale.y = scaleY;
-  }
+  const reactionAge = now - reactionStartedAt;
+  const reactionWeight = reactionAge >= 0 && reactionAge < 900
+    ? 1 - reactionAge / 900
+    : 0;
+  const waveAge = now - waveStartedAt;
+  const waveRaise = smoothStep(0, 360, waveAge);
+  const waveLower = smoothStep(2050, 2450, waveAge);
+  const raisedArm = waveRaise * (1 - waveLower);
+  const waveOscillation = waveAge >= 360 && waveAge < 2050
+    ? Math.sin((waveAge - 360) * 0.018)
+    : 0;
+  const speakingGesture = speaking ? Math.sin(now * 0.004) * 0.035 : 0;
 
-  // Gentle arm breathing sway
-  if (rawLeftUpperArm && rawRightUpperArm) {
-    const sway = Math.sin(now * 0.0018) * 0.015;
-    rawLeftUpperArm.rotation.set(targetArmForwardX, 0, targetArmZ + sway);
-    rawRightUpperArm.rotation.set(targetArmForwardX, 0, -targetArmZ - sway);
-  }
-  if (rawLeftLowerArm && rawRightLowerArm) {
-    rawLeftLowerArm.rotation.set(0, targetElbowY, 0);
-    rawRightLowerArm.rotation.set(0, -targetElbowY, 0);
+  // Compose every pose from the imported normalized rest pose so repeated gestures cannot drift.
+  if (humanoid && normalizedRestPose && animatedPose) {
+    const pose = animatedPose;
+    const idleSway = Math.sin(now * 0.0018) * 0.025;
+    writePoseEuler(pose, normalizedRestPose, 'leftUpperArm', 0.04, 0, -1.05 + idleSway);
+    writePoseEuler(
+      pose,
+      normalizedRestPose,
+      'rightUpperArm',
+      0.04 + raisedArm * 0.22,
+      0,
+      1.05 - raisedArm * 2.1 - speakingGesture,
+    );
+    writePoseEuler(pose, normalizedRestPose, 'rightLowerArm', 0, 0, -raisedArm * 1.35);
+    writePoseEuler(
+      pose,
+      normalizedRestPose,
+      'rightHand',
+      waveOscillation * raisedArm * 0.35,
+      waveOscillation * raisedArm * 0.55,
+      waveOscillation * raisedArm * 0.45,
+    );
+
+    const headDriftX = Math.sin(now * 0.00055) * 0.018 - reactionWeight * 0.045;
+    const headDriftY = Math.sin(now * 0.00031) * 0.028 + reactionWeight * 0.09;
+    writePoseEuler(pose, normalizedRestPose, 'head', headDriftX, headDriftY, 0);
+
+    const fingerCurl = 0.12 + Math.max(0, waveOscillation) * raisedArm * 0.18;
+    for (const finger of rightFingerBones) {
+      if (humanoid.getNormalizedBoneNode(finger)) {
+        writePoseEuler(pose, normalizedRestPose, finger, fingerCurl, 0, 0);
+      }
+    }
+    humanoid.setNormalizedPose(pose);
   }
 
   updateBlink(now);
   if (currentVrm) currentVrm.update(dt);
+  if (chestBone) {
+    const breath = speaking ? 0.006 : 0.012;
+    chestBone.scale.y = chestBaseScale.y * (1 + Math.sin(now * 0.0018) * breath);
+  }
   controls.update();
   renderer.render(scene, camera);
   rafId = requestAnimationFrame(animate);
@@ -260,8 +324,11 @@ const api: CompanionApi = {
       currentVrm = loadedVrm;
       scene.add(loadedVrm.scene);
       findBones(loadedVrm);
+      loadedVrm.update(0);
+      loadedVrm.scene.updateMatrixWorld(true);
       frameModel();
       applyEmotion();
+      wave();
       renderer.render(scene, camera);
       console.log('✅ VRM successfully loaded and natural pose applied in companion web!');
     } catch (error) {
@@ -283,6 +350,8 @@ const api: CompanionApi = {
   setSpeaking(value): void {
     speaking = value;
   },
+  wave,
+  react,
   pause(): void {
     stopLoop();
   },
