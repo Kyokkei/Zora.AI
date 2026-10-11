@@ -63,7 +63,8 @@ internal fun GlassNavigationDock(
     val restingTint = if (isLight) Color(0xFF656577) else Color(0xFFB4B3CB)
     val selectedTint = if (isLight) lerp(accent, Color(0xFF172333), 0.6f) else accent
 
-    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp)) {
+    val horizontalDockPadding = if (destinations.size > 4) 8.dp else 14.dp
+    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = horizontalDockPadding, vertical = 10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth()
                 .background(Brush.linearGradient(listOf(reflection, glass.copy(alpha = 0.86f), glass.copy(alpha = 0.72f))), shape)
@@ -94,8 +95,9 @@ internal fun GlassNavigationDock(
                 ) {
                     DockGlyph(destination.icon, tint, selected)
                     Spacer(Modifier.height(5.dp))
+                    val labelFontSize = if (destinations.size > 4) 9.5.sp else 11.sp
                     Text(destination.label, color = tint, style = MaterialTheme.typography.labelSmall,
-                        fontSize = 11.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        fontSize = labelFontSize, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }

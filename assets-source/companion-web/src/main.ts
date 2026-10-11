@@ -24,7 +24,10 @@ type CompanionApi = {
 declare global {
   interface Window {
     companion: CompanionApi;
-    AndroidBridge?: { onError?: (message: string) => void };
+    AndroidBridge?: {
+      onError?: (message: string) => void;
+      onReady?: () => void;
+    };
   }
 }
 
@@ -32,8 +35,8 @@ const root = document.getElementById('app');
 if (!root) throw new Error('Companion canvas root is missing');
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 100);
-camera.position.set(0, 1.35, 3.2);
+const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 50.0);
+camera.position.set(0, 1.35, 1.25);
 
 const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'low-power' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -41,19 +44,20 @@ renderer.setClearAlpha(0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 root.appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x827b9a, 2.0));
-const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
-keyLight.position.set(1, 2, 3);
+// Studio Lighting matching PC test bench
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 2.0));
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
+keyLight.position.set(1.0, 2.0, 1.5).normalize();
 scene.add(keyLight);
-const fillLight = new THREE.DirectionalLight(0xa9baff, 1.1);
-fillLight.position.set(-2, 1, -1);
+const fillLight = new THREE.DirectionalLight(0x88bbff, 1.2);
+fillLight.position.set(-1.0, 1.5, -2.0).normalize();
 scene.add(fillLight);
 
-// Keep one controls instance for consistent camera updates; input is disabled for the embedded view.
+// Controls for camera framing
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enabled = false;
 controls.enableDamping = false;
-controls.target.set(0, 1.15, 0);
+controls.target.set(0, 1.20, 0);
 controls.update();
 
 const loader = new GLTFLoader();
@@ -71,18 +75,30 @@ let emotionWeight = 0;
 let blinkUntil = 0;
 let nextBlinkAt = performance.now() + 4000;
 let previousFrameAt = performance.now();
+
+// Humanoid Raw Bones
 let headBone: THREE.Object3D | null = null;
 let chestBone: THREE.Object3D | null = null;
+let rawLeftUpperArm: THREE.Object3D | null = null;
+let rawRightUpperArm: THREE.Object3D | null = null;
+let rawLeftLowerArm: THREE.Object3D | null = null;
+let rawRightLowerArm: THREE.Object3D | null = null;
+
 let headBaseRotation = new THREE.Euler();
 let chestBaseScale = new THREE.Vector3(1, 1, 1);
+
+// Natural Resting Pose Angles (verified from PC test bench)
+const targetArmZ = 1.30;
+const targetArmForwardX = 0.15;
+const targetElbowY = 0.00;
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 const randomBlinkDelay = (): number => 3000 + Math.random() * 2000;
 
 function resize(): void {
-  const width = Math.max(1, root.clientWidth);
-  const height = Math.max(1, root.clientHeight);
-  renderer.setSize(width, height, false);
+  const width = Math.max(1, window.innerWidth || root.clientWidth);
+  const height = Math.max(1, window.innerHeight || root.clientHeight);
+  renderer.setSize(width, height, true);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
 }
@@ -94,33 +110,61 @@ function clearCurrentVrm(): void {
   currentVrm = null;
   headBone = null;
   chestBone = null;
+  rawLeftUpperArm = null;
+  rawRightUpperArm = null;
+  rawLeftLowerArm = null;
+  rawRightLowerArm = null;
 }
 
-function frameModel(vrm: VRM): void {
-  const bounds = new THREE.Box3().setFromObject(vrm.scene);
-  if (bounds.isEmpty()) return;
-  const height = Math.max(0.1, bounds.max.y - bounds.min.y);
-  const targetY = bounds.min.y + height * 0.72;
-  const frameHeight = height * 0.72;
-  const distance = frameHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
-  controls.target.set((bounds.min.x + bounds.max.x) / 2, targetY, 0);
-  camera.position.set(controls.target.x, targetY, Math.max(0.8, distance * 1.08));
-  camera.near = Math.max(0.01, distance / 100);
-  camera.far = Math.max(100, distance * 10);
+function applyPoseDirect(): void {
+  if (rawLeftUpperArm) {
+    rawLeftUpperArm.rotation.set(targetArmForwardX, 0, targetArmZ);
+  }
+  if (rawRightUpperArm) {
+    rawRightUpperArm.rotation.set(targetArmForwardX, 0, -targetArmZ);
+  }
+  if (rawLeftLowerArm) {
+    rawLeftLowerArm.rotation.set(0, targetElbowY, 0);
+  }
+  if (rawRightLowerArm) {
+    rawRightLowerArm.rotation.set(0, -targetElbowY, 0);
+  }
+}
+
+function frameModel(): void {
+  const headPos = headBone ? headBone.getWorldPosition(new THREE.Vector3()) : new THREE.Vector3(0, 1.35, 0);
+  controls.target.set(headPos.x, headPos.y - 0.15, headPos.z);
+  // Match PC test bench Grok Ani bust framing
+  camera.position.set(headPos.x, headPos.y - 0.05, headPos.z + 1.25);
+  camera.near = 0.1;
+  camera.far = 50.0;
   camera.updateProjectionMatrix();
   controls.update();
 }
 
 function findBones(vrm: VRM): void {
   const humanoid = vrm.humanoid;
+  if (!humanoid) return;
+
+  // CRITICAL: Disable autoUpdateHumanBones so VRMHumanoid doesn't overwrite raw bones with T-pose every frame!
+  humanoid.autoUpdateHumanBones = false;
+
   headBone = humanoid.getRawBoneNode('head') ?? humanoid.getNormalizedBoneNode('head') ?? null;
   chestBone = humanoid.getRawBoneNode('chest')
     ?? humanoid.getRawBoneNode('upperChest')
     ?? humanoid.getNormalizedBoneNode('chest')
     ?? humanoid.getNormalizedBoneNode('upperChest')
     ?? null;
+
+  rawLeftUpperArm = humanoid.getRawBoneNode('leftUpperArm') ?? null;
+  rawRightUpperArm = humanoid.getRawBoneNode('rightUpperArm') ?? null;
+  rawLeftLowerArm = humanoid.getRawBoneNode('leftLowerArm') ?? null;
+  rawRightLowerArm = humanoid.getRawBoneNode('rightLowerArm') ?? null;
+
   if (headBone) headBaseRotation.copy(headBone.rotation);
   if (chestBone) chestBaseScale.copy(chestBone.scale);
+
+  applyPoseDirect();
 }
 
 function applyEmotion(): void {
@@ -160,15 +204,29 @@ function animate(now: number): void {
     manager.setValue('oh', mouthCurrent[4]);
   }
 
+  // Idle head drift
   if (headBone) {
     headBone.rotation.x = headBaseRotation.x + Math.sin(now * 0.00055) * 0.018;
     headBone.rotation.y = headBaseRotation.y + Math.sin(now * 0.00031) * 0.028;
   }
+  // Breathing scale
   if (chestBone) {
     const breath = speaking ? 0.006 : 0.012;
     const scaleY = chestBaseScale.y * (1 + Math.sin(now * 0.0018) * breath);
     chestBone.scale.y = scaleY;
   }
+
+  // Gentle arm breathing sway
+  if (rawLeftUpperArm && rawRightUpperArm) {
+    const sway = Math.sin(now * 0.0018) * 0.015;
+    rawLeftUpperArm.rotation.set(targetArmForwardX, 0, targetArmZ + sway);
+    rawRightUpperArm.rotation.set(targetArmForwardX, 0, -targetArmZ - sway);
+  }
+  if (rawLeftLowerArm && rawRightLowerArm) {
+    rawLeftLowerArm.rotation.set(0, targetElbowY, 0);
+    rawRightLowerArm.rotation.set(0, -targetElbowY, 0);
+  }
+
   updateBlink(now);
   if (currentVrm) currentVrm.update(dt);
   controls.update();
@@ -201,10 +259,11 @@ const api: CompanionApi = {
       clearCurrentVrm();
       currentVrm = loadedVrm;
       scene.add(loadedVrm.scene);
-      frameModel(loadedVrm);
       findBones(loadedVrm);
+      frameModel();
       applyEmotion();
       renderer.render(scene, camera);
+      console.log('✅ VRM successfully loaded and natural pose applied in companion web!');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       api.onError?.(message);
@@ -249,3 +308,5 @@ window.addEventListener('resize', resize, { passive: true });
 resize();
 window.companion = api;
 startLoop();
+console.log('Companion JS initialized and ready!');
+window.AndroidBridge?.onReady?.();

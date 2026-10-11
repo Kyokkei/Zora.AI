@@ -80,27 +80,51 @@ fun CompanionStage(
             )
             .build()
 
+        WebView.setWebContentsDebuggingEnabled(true)
         WebView(context).apply {
             setBackgroundColor(AndroidColor.TRANSPARENT)
             settings.javaScriptEnabled = true
-            settings.domStorageEnabled = false
-            settings.allowFileAccess = false
-            settings.allowContentAccess = false
-            setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+            settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+            settings.allowFileAccess = true
+            settings.allowContentAccess = true
+            setLayerType(android.view.View.LAYER_TYPE_NONE, null)
             addJavascriptInterface(object {
                 @JavascriptInterface
                 fun onError(message: String) {
+                    android.util.Log.e("CompanionJS", "Bridge Error: $message")
                     post { currentOnError(message) }
                 }
             }, "AndroidBridge")
+            webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+                    android.util.Log.d("CompanionJS", "${message.messageLevel()}: ${message.message()} -- [line ${message.lineNumber()} of ${message.sourceId()}]")
+                    return true
+                }
+            }
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView,
                     request: android.webkit.WebResourceRequest,
-                ): android.webkit.WebResourceResponse? = assetLoader.shouldInterceptRequest(request.url)
+                ): android.webkit.WebResourceResponse? {
+                    val response = assetLoader.shouldInterceptRequest(request.url)
+                    if (response == null) {
+                        android.util.Log.w("CompanionJS", "Unhandled request: ${request.url}")
+                    }
+                    return response
+                }
 
                 override fun onPageFinished(view: WebView, url: String) {
+                    android.util.Log.d("CompanionJS", "Page finished loading: $url")
                     if (url.startsWith(COMPANION_PAGE)) pageReady = true
+                }
+
+                override fun onReceivedError(
+                    view: WebView,
+                    request: android.webkit.WebResourceRequest,
+                    error: android.webkit.WebResourceError
+                ) {
+                    android.util.Log.e("CompanionJS", "WebView Error: ${error.description} for ${request.url}")
                 }
             }
             loadUrl(COMPANION_PAGE)
@@ -116,15 +140,36 @@ fun CompanionStage(
     )
 
     LaunchedEffect(webView, pageReady, safeVrmUrl) {
-        if (pageReady) {
-            if (loadedVrmUrl != safeVrmUrl) {
-                safeVrmUrl?.let { url ->
-                    webView.evaluateJavascript(
-                        "window.companion && window.companion.loadVrm(${javascriptString(url)}).catch(function(){});",
-                        null,
-                    )
-                }
-                loadedVrmUrl = safeVrmUrl
+        if (pageReady && safeVrmUrl != null) {
+            val url = safeVrmUrl
+            if (loadedVrmUrl != url) {
+                val script = """
+                    (function() {
+                        var tries = 0;
+                        function attempt() {
+                            if (window.companion && window.companion.loadVrm) {
+                                console.log('Found window.companion, loading VRM: ' + ${javascriptString(url)});
+                                window.companion.loadVrm(${javascriptString(url)}).then(function() {
+                                    console.log('VRM model loaded successfully!');
+                                }).catch(function(err) {
+                                    console.error('Failed to load VRM model: ' + err);
+                                    if (window.AndroidBridge && window.AndroidBridge.onError) {
+                                        window.AndroidBridge.onError(String(err));
+                                    }
+                                });
+                            } else if (tries < 50) {
+                                tries++;
+                                console.log('Waiting for window.companion (attempt ' + tries + ')...');
+                                setTimeout(attempt, 150);
+                            } else {
+                                console.error('Timed out waiting for window.companion');
+                            }
+                        }
+                        attempt();
+                    })();
+                """.trimIndent()
+                webView.evaluateJavascript(script, null)
+                loadedVrmUrl = url
             }
             webView.evaluateJavascript(
                 "window.companion && window.companion.setMouth(${currentMouth},0,0,0,0);" +
@@ -182,11 +227,9 @@ private fun internalVrmUrl(filesDir: File, uri: Uri): String? {
         null -> uri.path
         else -> null
     } ?: return null
-    val file = File(path).canonicalFile
-    val root = File(filesDir, "vrm").canonicalFile
-    if (!file.path.startsWith(root.path + File.separator) || !file.isFile) return null
-    val relativePath = root.toPath().relativize(file.toPath()).toString().replace(File.separatorChar, '/')
-    return INTERNAL_VRM_PREFIX + relativePath.split('/').joinToString("/") { Uri.encode(it) }
+    val file = File(path)
+    if (!file.name.endsWith(".vrm", ignoreCase = true)) return null
+    return INTERNAL_VRM_PREFIX + Uri.encode(file.name)
 }
 
 private fun javascriptString(value: String): String = JSONObject.quote(value)

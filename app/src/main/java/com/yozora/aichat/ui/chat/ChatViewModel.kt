@@ -812,6 +812,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     var voiceCallScreenShareEnabled by mutableStateOf(false)
         private set
 
+    var voiceCallCompanionMode by mutableStateOf(false)
+        private set
+
+    var voiceCallVrmUri by mutableStateOf<Uri?>(null)
+        private set
+
+    val audioEnvelope = com.yozora.aichat.companion.AudioEnvelope()
+
     val voiceCallTranscriptLines = mutableStateListOf<LiveCallTranscriptLine>()
 
     var globalMemoryBlock by mutableStateOf("")
@@ -2242,7 +2250,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         sessionDrawerVisible = false
     }
 
-    fun openVoiceCall() {
+    fun openVoiceCall(companion: Boolean = false, vrmUri: Uri? = null) {
         if (persona.vendor != ApiVendor.Google) {
             chatError = "Voice calls use Gemini only. Switch this persona to Google."
             return
@@ -2250,6 +2258,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         sessionDrawerVisible = false
         personaSheetVisible = false
         appSettingsVisible = false
+        voiceCallCompanionMode = companion
+        voiceCallVrmUri = vrmUri
         voiceCallMuted = false
         voiceCallVideoEnabled = false
         voiceCallCameraFacing = VoiceCallCameraFacing.Front
@@ -2271,7 +2281,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         ScreenShareForegroundService.stop(getApplication())
         completeVoiceCallModelTurn(persist = false)
         persistChatState()
+        audioEnvelope.reset()
         voiceCallActive = false
+        voiceCallCompanionMode = false
+        voiceCallVrmUri = null
         voiceCallStatus = "Idle"
         voiceCallSessionId = null
         voiceCallModelMessageId = null
@@ -2284,6 +2297,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         voiceCallScreenShareEnabled = false
         voiceCallError = null
     }
+
+    fun voiceCallPlaybackHeadFrames(): Long = geminiLiveCallService.playbackHeadFrames()
 
     fun toggleVoiceCallMute() {
         voiceCallMuted = !voiceCallMuted
@@ -2404,6 +2419,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val callSpeakerName = personaEntity.name
             geminiLiveCallService.onSessionResumeHandle = { handle ->
                 voiceCallResumeHandle = handle
+            }
+            var baseFrameOffset = 0L
+            audioEnvelope.reset()
+            geminiLiveCallService.onOutputAudio = { pcm ->
+                audioEnvelope.submitChunk(pcm, baseFrameOffset)
+                baseFrameOffset += pcm.size / 2
             }
             geminiLiveCallService.onSessionGoAway = {
                 viewModelScope.launch(Dispatchers.Main) {

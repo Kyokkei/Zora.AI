@@ -502,6 +502,10 @@ fun CompanionChatApp(
             videoEnabled = viewModel.voiceCallVideoEnabled,
             cameraFacing = viewModel.voiceCallCameraFacing,
             screenShareEnabled = viewModel.voiceCallScreenShareEnabled,
+            companionMode = viewModel.voiceCallCompanionMode,
+            vrmUri = viewModel.voiceCallVrmUri,
+            audioEnvelope = viewModel.audioEnvelope,
+            playbackHeadFrames = viewModel::voiceCallPlaybackHeadFrames,
             transcriptLines = viewModel.voiceCallTranscriptLines,
             onCameraFrame = viewModel::sendVoiceCallVideoFrame,
             onBack = viewModel::closeVoiceCall,
@@ -1573,6 +1577,10 @@ private fun VoiceCallScreen(
     videoEnabled: Boolean,
     cameraFacing: VoiceCallCameraFacing,
     screenShareEnabled: Boolean,
+    companionMode: Boolean = false,
+    vrmUri: android.net.Uri? = null,
+    audioEnvelope: com.yozora.aichat.companion.AudioEnvelope? = null,
+    playbackHeadFrames: () -> Long = { 0L },
     transcriptLines: List<LiveCallTranscriptLine>,
     onCameraFrame: (ByteArray) -> Unit,
     onBack: () -> Unit,
@@ -1770,6 +1778,31 @@ private fun VoiceCallScreen(
                         )
                     }
                 }
+            } else if (companionMode) {
+                var mouthAa by remember { mutableStateOf(0f) }
+                LaunchedEffect(audioEnvelope) {
+                    var lastTime = System.currentTimeMillis()
+                    while (true) {
+                        val now = System.currentTimeMillis()
+                        val dt = (now - lastTime).toFloat()
+                        lastTime = now
+                        val head = playbackHeadFrames()
+                        mouthAa = audioEnvelope?.mouthAt(head, dt) ?: 0f
+                        delay(33L)
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(if (compactLayout) 260.dp else 360.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    com.yozora.aichat.ui.companion.CompanionStage(
+                        modifier = Modifier.fillMaxSize(),
+                        vrmUri = vrmUri,
+                        mouthAa = mouthAa
+                    )
+                }
             } else {
                 VoiceAvatar(
                     persona = persona,
@@ -1856,18 +1889,20 @@ private fun VoiceCallScreen(
                         selected = muted,
                         onClick = onToggleMute
                     )
-                    VoiceControlButton(
-                        icon = Icons.Rounded.Videocam,
-                        label = "Video",
-                        selected = videoEnabled,
-                        onClick = onToggleVideo
-                    )
-                    VoiceControlButton(
-                        icon = Icons.Rounded.ScreenShare,
-                        label = "Share",
-                        selected = screenShareEnabled,
-                        onClick = onToggleScreenShare
-                    )
+                    if (!companionMode) {
+                        VoiceControlButton(
+                            icon = Icons.Rounded.Videocam,
+                            label = "Video",
+                            selected = videoEnabled,
+                            onClick = onToggleVideo
+                        )
+                        VoiceControlButton(
+                            icon = Icons.Rounded.ScreenShare,
+                            label = "Share",
+                            selected = screenShareEnabled,
+                            onClick = onToggleScreenShare
+                        )
+                    }
                     VoiceControlButton(
                         icon = Icons.Rounded.CallEnd,
                         label = "End",
@@ -9296,7 +9331,7 @@ internal data class PresetCharacter(
 
 private val PresetCharacters = emptyList<PresetCharacter>()
 
-private data class RoleplayColors(
+internal data class RoleplayColors(
     val background: Color,
     val surface: Color,
     val surface2: Color,
@@ -9308,7 +9343,9 @@ private data class RoleplayColors(
     val accentSoft: Color,
     val buttonCyan: Color,
     val isLight: Boolean
-)
+) {
+    val onSurface: Color get() = textPrimary
+}
 
 private val RoleplayDarkColors = RoleplayColors(
     background = AppBackground,

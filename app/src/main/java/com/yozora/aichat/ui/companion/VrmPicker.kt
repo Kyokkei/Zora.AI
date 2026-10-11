@@ -42,7 +42,7 @@ fun VrmPicker(
     }
 
     Button(
-        onClick = { picker.launch(arrayOf("application/octet-stream", "model/gltf-binary")) },
+        onClick = { picker.launch(arrayOf("*/*")) },
         modifier = modifier,
     ) {
         content()
