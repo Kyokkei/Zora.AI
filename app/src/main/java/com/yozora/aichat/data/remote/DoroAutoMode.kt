@@ -12,6 +12,9 @@ import java.util.TimeZone
 const val DORO_AUTO_MODEL_ID = "doro-auto"
 const val DORO_AUTO_MODEL_LABEL = "DoroAutoMode"
 
+const val DORO_AUTO_PRO_MODEL_ID = "doro-auto-pro"
+const val DORO_AUTO_PRO_MODEL_LABEL = "DoroAutoMode PRO+"
+
 val DORO_AUTO_FALLBACK_MODELS = listOf(
     "gemini-3.6-flash",
     "gemini-3.5-flash",
@@ -20,15 +23,33 @@ val DORO_AUTO_FALLBACK_MODELS = listOf(
     "gemini-3-flash"
 )
 
-fun isDoroAutoModel(model: String): Boolean = model == DORO_AUTO_MODEL_ID
+/** Highest capability first; every step down is a cheaper, more available model. */
+val DORO_AUTO_PRO_FALLBACK_MODELS = listOf(
+    "gemini-4-hydrogen",
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite"
+)
 
-fun modelDisplayName(model: String): String =
-    if (isDoroAutoModel(model)) DORO_AUTO_MODEL_LABEL else model
+private fun doroTierFor(model: String): List<String>? = when (model) {
+    DORO_AUTO_MODEL_ID -> DORO_AUTO_FALLBACK_MODELS
+    DORO_AUTO_PRO_MODEL_ID -> DORO_AUTO_PRO_FALLBACK_MODELS
+    else -> null
+}
+
+fun isDoroAutoModel(model: String): Boolean = doroTierFor(model) != null
+
+fun modelDisplayName(model: String): String = when (model) {
+    DORO_AUTO_MODEL_ID -> DORO_AUTO_MODEL_LABEL
+    DORO_AUTO_PRO_MODEL_ID -> DORO_AUTO_PRO_MODEL_LABEL
+    else -> model
+}
 
 class DoroAutoExhaustedException(
     cause: ApiHttpException? = null
 ) : IOException(
-    "HTTP 429: DoroAutoMode quota exhausted for all Google fallback models.",
+    "DoroAutoMode exhausted: every fallback model is rate-limited or unavailable.",
     cause
 )
 
@@ -54,9 +75,7 @@ class DoroAutoRouter(
         apiKey: String,
         request: suspend (resolvedModel: String) -> T
     ): T {
-        if (!isDoroAutoModel(selectedModel)) {
-            return request(selectedModel)
-        }
+        val tier = doroTierFor(selectedModel) ?: return request(selectedModel)
 
         val quotaDay = dayProvider()
         val cacheKey = CacheKey(
@@ -66,29 +85,32 @@ class DoroAutoRouter(
         val candidates = cacheMutex.withLock {
             discardOlderDaysLocked(quotaDay)
             val exhausted = dailyExhaustedModels[cacheKey].orEmpty()
-            DORO_AUTO_FALLBACK_MODELS.filterNot(exhausted::contains)
+            tier.filterNot(exhausted::contains)
         }
 
         if (candidates.isEmpty()) {
             throw DoroAutoExhaustedException()
         }
 
-        var lastRateLimit: ApiHttpException? = null
+        var lastRetryable: ApiHttpException? = null
         for (candidate in candidates) {
             try {
                 return request(candidate)
             } catch (error: ApiHttpException) {
-                if (error.statusCode != 429) {
+                if (!isRetryableFailure(error)) {
                     throw error
                 }
-                lastRateLimit = error
-                if (isDailyQuotaExceeded(error)) {
+                lastRetryable = error
+                // Only a per-day quota burns the model for the rest of the day.
+                // 503 / high-demand is transient: keep the model eligible so the
+                // next message can try it again instead of degrading for hours.
+                if (error.statusCode == 429 && isDailyQuotaExceeded(error)) {
                     markDailyQuotaExhausted(cacheKey, candidate, quotaDay)
                 }
             }
         }
 
-        throw DoroAutoExhaustedException(lastRateLimit)
+        throw DoroAutoExhaustedException(lastRetryable)
     }
 
     private suspend fun markDailyQuotaExhausted(
@@ -120,6 +142,39 @@ internal fun isDailyQuotaExceeded(error: ApiHttpException): Boolean {
         (normalized.contains("quota") && normalized.contains("daily")) ||
         Regex("\\brpd\\b", RegexOption.IGNORE_CASE).containsMatchIn(payload)
 }
+
+/**
+ * Whether this failure means "this model cannot serve right now, try the next one".
+ *
+ * Two families qualify:
+ *  - 429 RESOURCE_EXHAUSTED — quota or per-minute rate limit.
+ *  - 503 UNAVAILABLE — Google-side overload, reported either as a status code or
+ *    as a "high demand" / "overloaded" message on a 429 body.
+ *
+ * Everything else (400 bad key, 404 unknown model, 403 permissions) is permanent
+ * for the whole tier, so failing fast beats burning requests on the other models.
+ */
+internal fun isRetryableFailure(error: ApiHttpException): Boolean {
+    if (error.statusCode == 429 || error.statusCode == 503) return true
+    if (error.statusCode !in 500..599) return false
+    val payload = buildString {
+        append(error.apiMessage)
+        append('\n')
+        append(error.responseBody)
+    }.lowercase(Locale.US)
+    return HIGH_DEMAND_MARKERS.any(payload::contains)
+}
+
+private val HIGH_DEMAND_MARKERS = listOf(
+    "high demand",
+    "overloaded",
+    "over capacity",
+    "capacity",
+    "try again later",
+    "temporarily unavailable",
+    "unavailable",
+    "resource exhausted"
+)
 
 internal fun pacificQuotaDay(now: Date = Date()): String {
     return SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {

@@ -44,7 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-internal enum class DockIcon { Discover, Chats, Create, Settings }
+internal enum class DockIcon { Discover, Chats, Create, Settings, Companion }
 internal data class DockDestination(val label: String, val icon: DockIcon)
 
 @Composable
@@ -63,7 +63,8 @@ internal fun GlassNavigationDock(
     val restingTint = if (isLight) Color(0xFF656577) else Color(0xFFB4B3CB)
     val selectedTint = if (isLight) lerp(accent, Color(0xFF172333), 0.6f) else accent
 
-    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp)) {
+    val horizontalDockPadding = if (destinations.size > 4) 8.dp else 14.dp
+    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = horizontalDockPadding, vertical = 10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth()
                 .background(Brush.linearGradient(listOf(reflection, glass.copy(alpha = 0.86f), glass.copy(alpha = 0.72f))), shape)
@@ -94,8 +95,9 @@ internal fun GlassNavigationDock(
                 ) {
                     DockGlyph(destination.icon, tint, selected)
                     Spacer(Modifier.height(5.dp))
+                    val labelFontSize = if (destinations.size > 4) 9.5.sp else 11.sp
                     Text(destination.label, color = tint, style = MaterialTheme.typography.labelSmall,
-                        fontSize = 11.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        fontSize = labelFontSize, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -159,6 +161,16 @@ private fun DockGlyph(icon: DockIcon, tint: Color, selected: Boolean) {
                         drawRoundRect(tint.copy(alpha = if (selected) 0.18f else 0.06f), Offset(x - 2.8f, y - 2.8f), Size(5.6f, 5.6f), CornerRadius(1.8f))
                         drawRoundRect(tint, Offset(x - 2.8f, y - 2.8f), Size(5.6f, 5.6f), CornerRadius(1.8f), style = stroke)
                     }
+                }
+                DockIcon.Companion -> {
+                    // Head circle
+                    drawCircle(tint.copy(alpha = if (selected) 0.14f else 0.04f), 3.8f, Offset(9f, 7f))
+                    drawCircle(tint, 3.8f, Offset(9f, 7f), style = stroke)
+                    // Shoulders arc
+                    drawArc(tint, 180f, 180f, false, Offset(2f, 10f), Size(14f, 9f), style = stroke)
+                    // Sound-wave arcs (two concentric, right side of head)
+                    drawArc(tint.copy(alpha = 0.72f), -50f, 100f, false, Offset(13.5f, 3.5f), Size(5f, 7f), style = Stroke(width = 1.5f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawArc(tint, -50f, 100f, false, Offset(16f, 1.5f), Size(6f, 10f), style = Stroke(width = 1.5f, cap = StrokeCap.Round, join = StrokeJoin.Round))
                 }
             }
         }

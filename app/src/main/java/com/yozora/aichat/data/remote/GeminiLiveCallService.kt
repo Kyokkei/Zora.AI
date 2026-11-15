@@ -33,10 +33,13 @@ data class GeminiLiveCallConfig(
     val modelId: String,
     val systemInstruction: String,
     val voiceName: String,
-    val priorConversationContext: String?
+    val priorConversationContext: String?,
+    val resumeHandle: String? = null
 )
 
-class GeminiLiveCallService {
+class GeminiLiveCallService(
+    private val liveWebSocketUrl: String = LIVE_WEBSOCKET_URL
+) {
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
@@ -62,6 +65,13 @@ class GeminiLiveCallService {
     private var priorConversationContext: String? = null
     private var ambientRms = INITIAL_AMBIENT_RMS
     private var speechHangoverChunks = 0
+    private var sessionResumeHandle: String? = null
+    private var goAwayTask: ScheduledFuture<*>? = null
+    private val goAwayHandled = AtomicBoolean(false)
+
+    var onOutputAudio: ((pcm: ByteArray) -> Unit)? = null
+    var onSessionResumeHandle: ((handle: String) -> Unit)? = null
+    var onSessionGoAway: ((timeLeftMs: Long) -> Unit)? = null
 
     fun start(
         config: GeminiLiveCallConfig,
@@ -82,11 +92,14 @@ class GeminiLiveCallService {
         muted.set(false)
         setupComplete.set(false)
         captureStarted.set(false)
+        goAwayHandled.set(false)
+        goAwayTask?.cancel(false)
+        goAwayTask = null
         onStatus("Connecting...")
 
         val encodedKey = URLEncoder.encode(config.apiKey, StandardCharsets.UTF_8.name())
         val request = Request.Builder()
-            .url("$LIVE_WEBSOCKET_URL?key=$encodedKey")
+            .url("$liveWebSocketUrl?key=$encodedKey")
             .build()
 
         webSocket = client.newWebSocket(
@@ -190,6 +203,8 @@ class GeminiLiveCallService {
     fun stop() {
         setupTimeoutTask?.cancel(false)
         setupTimeoutTask = null
+        goAwayTask?.cancel(false)
+        goAwayTask = null
         if (!running.getAndSet(false)) {
             releaseAudio()
             webSocket = null
@@ -199,6 +214,43 @@ class GeminiLiveCallService {
         webSocket?.close(1000, "Call ended")
         webSocket = null
         releaseAudio()
+    }
+
+    fun playbackHeadFrames(): Long = audioTrack?.playbackHeadPosition?.toLong() ?: 0L
+
+    fun currentSessionResumeHandle(): String? = sessionResumeHandle
+
+    private fun handleGoAway(payload: JSONObject) {
+        val timeLeftMs = parseGoAwayTimeLeft(payload.optString("timeLeft"))
+        if (!goAwayHandled.compareAndSet(false, true)) return
+        val reconnectDelayMs = goAwayReconnectDelayMs(timeLeftMs)
+        goAwayTask?.cancel(false)
+        goAwayTask = timeoutExecutor.schedule(
+            {
+                if (running.get()) {
+                    onSessionGoAway?.invoke(timeLeftMs)
+                }
+            },
+            reconnectDelayMs,
+            TimeUnit.MILLISECONDS
+        )
+    }
+
+    private fun goAwayReconnectDelayMs(timeLeftMs: Long): Long {
+        if (timeLeftMs <= 0L) return 0L
+        return (timeLeftMs / 2).coerceAtMost(MAX_GO_AWAY_RECONNECT_DELAY_MS)
+    }
+
+    private fun parseGoAwayTimeLeft(raw: String?): Long {
+        val value = raw?.trim()?.lowercase() ?: return 0L
+        if (value.isEmpty()) return 0L
+        val match = GO_AWAY_DURATION.matchEntire(value) ?: return 0L
+        val amount = match.groupValues[1].toDoubleOrNull() ?: return 0L
+        return when (match.groupValues[2]) {
+            "ms" -> amount.toLong()
+            "s" -> (amount * 1_000.0).toLong()
+            else -> (amount * 60_000.0).toLong()
+        }
     }
 
     private fun handleServerMessage(raw: String) {
@@ -224,9 +276,24 @@ class GeminiLiveCallService {
             return
         }
 
+        json.optJSONObject("sessionResumptionUpdate")
+            ?.optString("newHandle")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { handle ->
+                sessionResumeHandle = handle
+                onSessionResumeHandle?.invoke(handle)
+            }
+
+        json.optJSONObject("goAway")?.let { payload ->
+            handleGoAway(payload)
+            return
+        }
+
         val serverContent = json.optJSONObject("serverContent") ?: return
         if (serverContent.optBoolean("interrupted")) {
+            audioTrack?.pause()
             audioTrack?.flush()
+            audioTrack?.play()
         }
 
         serverContent.optJSONObject("inputTranscription")
@@ -273,6 +340,7 @@ class GeminiLiveCallService {
                     return
                 }
                 onStatus?.invoke("Speaking...")
+                onOutputAudio?.invoke(audioBytes)
                 val written = track.write(audioBytes, 0, audioBytes.size)
                 if (written < 0) {
                     failAudio("Audio output failed with code $written.")
@@ -539,6 +607,14 @@ class GeminiLiveCallService {
                     "TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO"
                 )
             )
+            .put(
+                "contextWindowCompression",
+                JSONObject().put("slidingWindow", JSONObject())
+            )
+            .put(
+                "sessionResumption",
+                sessionResumptionSetup(config.resumeHandle)
+            )
         if (!config.priorConversationContext.isNullOrBlank()) {
             setup.put(
                 "historyConfig",
@@ -561,8 +637,19 @@ class GeminiLiveCallService {
         )
     }
 
+    private fun sessionResumptionSetup(resumeHandle: String?): JSONObject {
+        val resumption = JSONObject()
+        val readyHandle = resumeHandle?.trim()?.takeIf { it.isNotBlank() }
+        if (readyHandle != null) {
+            resumption.put("handle", readyHandle)
+        }
+        return resumption
+    }
+
     companion object {
-        const val DEFAULT_MODEL_ID = "gemini-3.1-flash-live-preview"
+        const val DEFAULT_MODEL_ID = "gemini-3.8-live"
+        private val GO_AWAY_DURATION = Regex("([0-9]+(?:\\.[0-9]+)?)(ms|s|m)")
+        private const val MAX_GO_AWAY_RECONNECT_DELAY_MS = 2_000L
         private const val LIVE_WEBSOCKET_URL =
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
         private const val INPUT_SAMPLE_RATE = 16000

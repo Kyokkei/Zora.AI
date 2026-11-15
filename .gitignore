@@ -11,5 +11,7 @@ hub/node_modules/
 hub/.wrangler/
 hub/.dev.vars
 hub/dist/
+assets-source/companion-web/node_modules/
+assets-source/companion-web/dist/
 /plan.md
 /improve.md

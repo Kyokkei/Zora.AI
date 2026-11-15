@@ -9,7 +9,7 @@
 [![UI: Jetpack Compose](https://img.shields.io/badge/UI-Jetpack_Compose-4285F4.svg?logo=jetpackcompose&logoColor=white)](#-features)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Architecture: 100% BYOK](https://img.shields.io/badge/Architecture-100%25_BYOK_%26_Local--First-blueviolet.svg)](#-privacy--zero-telemetry-manifesto)
-[![Build: v2.3.0](https://img.shields.io/badge/Release-v2.3.0_(Build_246)-success.svg)](https://github.com/Kyokkei/Zora.AI/releases)
+[![Build: v2.3.1](https://img.shields.io/badge/Release-v2.3.1_(Build_247)-success.svg)](https://github.com/Kyokkei/Zora.AI/releases)
 
 **Zora.AI** is an advanced, production-grade native Android client engineered for high-fidelity AI roleplay, multimodal streaming, and complete creative sovereignty.
 
@@ -159,9 +159,16 @@ Acquire your API keys directly from upstream providers:
 ---
 
 <details>
-<summary><b>📜 Changelog & Version History (v2.2.3 – v2.3.0)</b></summary>
+<summary><b>📜 Changelog & Version History (v2.2.3 – v2.3.1)</b></summary>
 
-### What's New in v2.3.0
+### What's New in v2.3.1
+* 🌐 **Custom Endpoint Mode**: Point the Custom vendor at any OpenAI-compatible gateway — OpenRouter, TokenHarbor, or your own proxy — with a service name, base URL, optional proxy, and API key managed inline.
+* 🔎 **Searchable Model Picker**: Fetch the provider's model list and filter it as you type, or keep entering a model ID by hand.
+* 🧠 **DoroAutoMode PRO+**: A second autonomous Google tier that starts at `gemini-4-hydrogen` and steps down through `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, and `gemini-3.1-flash-lite` on quota, rate limit, 503, or high-demand errors.
+* 🚧 **Companion Teaser**: The Companion tab now shows a "coming soon" notice instead of opening an unfinished mode.
+* 🛡️ **IPv4-First Model Fetch**: Model discovery no longer stalls on networks that advertise IPv6 without routing it.
+
+### Previously in v2.3.0
 * 🔍 **Conversation Navigation**: Search saved messages, jump to matching results, and go directly to the beginning of a conversation.
 * 🔀 **Alternate Replies**: Swipe between saved AI replies with alternatives preserved across restarts.
 * 🫧 **Glass Navigation**: Refreshed bottom navigation with custom icons and improved API vault button placement.

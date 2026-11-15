@@ -8,7 +8,8 @@ import java.net.URI
 
 data class CustomApiConfig(
     val baseUrl: String = "",
-    val proxyUrl: String = ""
+    val proxyUrl: String = "",
+    val name: String = ""
 ) {
     fun validationError(): String? = runCatching {
         apiRoot()
@@ -20,13 +21,23 @@ data class CustomApiConfig(
         .build().toString()
 
     private fun apiRoot(): okhttp3.HttpUrl {
-        val url = baseUrl.trim().toHttpUrlOrNull()
+        val raw = baseUrl.trim()
+        val normalized = when {
+            raw.isEmpty() -> raw
+            raw.startsWith("//") -> "https:$raw"
+            raw.contains("://") -> raw
+            else -> "https://$raw"
+        }
+        val url = normalized.toHttpUrlOrNull()
         require(url != null) { "Enter a valid http:// or https:// base URL." }
         require(url.username.isEmpty() && url.password.isEmpty() && url.query == null && url.fragment == null) {
             "Use a base URL without credentials, query parameters, or a fragment."
         }
         val path = url.encodedPath.trimEnd('/')
             .removeSuffix("/chat/completions")
+            .removeSuffix("/messages")
+            .removeSuffix("/responses")
+            .removeSuffix("/generateContent")
             .removeSuffix("/models")
             .ifBlank { "/v1" }
         return url.newBuilder().encodedPath("$path/").build()
@@ -54,13 +65,15 @@ data class CustomApiConfig(
     fun toJson(): JSONObject = JSONObject()
         .put("baseUrl", baseUrl)
         .put("proxyUrl", proxyUrl)
+        .put("name", name)
 
     companion object {
         const val GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
         fun fromJson(json: JSONObject?): CustomApiConfig = CustomApiConfig(
             baseUrl = json?.optString("baseUrl").orEmpty(),
-            proxyUrl = json?.optString("proxyUrl").orEmpty()
+            proxyUrl = json?.optString("proxyUrl").orEmpty(),
+            name = json?.optString("name").orEmpty()
         )
     }
 }

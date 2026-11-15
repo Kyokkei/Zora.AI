@@ -8,6 +8,10 @@
     <string name="nav_chats">Trò chuyện</string>
     <string name="nav_create">Tạo mới</string>
     <string name="nav_settings">Cài đặt</string>
+    <string name="nav_companion">Đồng hành</string>
+    <string name="companion_start_call">Bắt đầu gọi</string>
+    <string name="companion_no_characters">Chưa có nhân vật. Tạo ngay!</string>
+    <string name="companion_not_google_hint">Chỉ hỗ trợ nhân vật Gemini</string>
 
     <!-- === DISCOVER SCREEN === -->
     <string name="search_characters">Tìm kiếm nhân vật</string>
@@ -254,4 +258,7 @@
     <string name="about_this_app">Về ứng dụng này</string>
     <string name="about_creator_note">Đôi lời từ người tạo ứng dụng</string>
     <string name="about_dedication">Tôi làm ứng dụng này cho bạn gái mình. Nếu không có cô ấy, ứng dụng này sẽ không bao giờ ra đời.\n\nTram Anh, cảm ơn em vì bảy năm bên nhau.</string>
+    <string name="companion_coming_soon_title">Sắp ra mắt</string>
+    <string name="companion_coming_soon_body">Tính năng Companion vẫn đang được phát triển và sẽ ra mắt trong bản cập nhật tới.</string>
+    <string name="companion_coming_soon_return">Về màn hình chính</string>
 </resources>

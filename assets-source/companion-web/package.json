@@ -1,0 +1,17 @@
+{
+  "name": "zora-companion-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "3.5.5",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "vite": "7.1.12",
+    "typescript": "5.9.3"
+  }
+}
