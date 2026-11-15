@@ -43,6 +43,7 @@ import com.yozora.aichat.data.remote.ApiHttpException
 import com.yozora.aichat.data.remote.CustomApiConfig
 import com.yozora.aichat.data.remote.DORO_AUTO_FALLBACK_MODELS
 import com.yozora.aichat.data.remote.DORO_AUTO_MODEL_ID
+import com.yozora.aichat.data.remote.DORO_AUTO_PRO_MODEL_ID
 import com.yozora.aichat.data.remote.DoroAutoExhaustedException
 import com.yozora.aichat.data.remote.ElevenLabsTtsException
 import com.yozora.aichat.data.remote.ElevenLabsTtsRepository
@@ -225,7 +226,7 @@ enum class ApiVendor(
         "google",
         "Google",
         DORO_AUTO_MODEL_ID,
-        listOf(DORO_AUTO_MODEL_ID) + DORO_AUTO_FALLBACK_MODELS
+        listOf(DORO_AUTO_PRO_MODEL_ID, DORO_AUTO_MODEL_ID) + DORO_AUTO_FALLBACK_MODELS
     ),
     GPT(
         "gpt",

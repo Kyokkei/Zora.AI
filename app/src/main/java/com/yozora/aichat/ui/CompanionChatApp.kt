@@ -373,6 +373,7 @@ fun CompanionChatApp(
     var previousRoleplayTab by remember { mutableStateOf(RoleplayTab.Discover) }
     var pendingCompanionCall by remember { mutableStateOf(false) }
     var companionEntryError by remember { mutableStateOf<String?>(null) }
+    var companionComingSoonVisible by remember { mutableStateOf(false) }
     var companionSettingsVisible by remember { mutableStateOf(false) }
     var activeChatOpen by remember { mutableStateOf(false) }
     var pendingConfigExportSession by remember { mutableStateOf<ChatSession?>(null) }
@@ -670,9 +671,9 @@ fun CompanionChatApp(
                     activeTab = activeRoleplayTab,
                     onTabChange = { tab ->
                         if (tab == RoleplayTab.Companion) {
-                            if (activeRoleplayTab != RoleplayTab.Companion) previousRoleplayTab = activeRoleplayTab
-                            activeRoleplayTab = RoleplayTab.Companion
-                            requestCompanionCall()
+                            // Companion is not shipping yet: keep the tab visible but
+                            // surface a notice instead of switching tabs.
+                            companionComingSoonVisible = true
                         } else {
                             activeRoleplayTab = tab
                             companionEntryError = null
@@ -1100,6 +1101,16 @@ fun CompanionChatApp(
         )
     }
 
+    if (companionComingSoonVisible) {
+        CompanionComingSoonDialog(
+            onDismiss = { companionComingSoonVisible = false },
+            onReturnHome = {
+                companionComingSoonVisible = false
+                activeRoleplayTab = RoleplayTab.Discover
+            }
+        )
+    }
+
     if (viewModel.rateLimitDialogVisible) {
         RateLimitRetryDialog(
             onDismiss = viewModel::dismissRateLimitDialog,
@@ -1111,6 +1122,7 @@ fun CompanionChatApp(
         viewModel.vaultScreenVisible -> BackHandler(onBack = viewModel::closeVaultScreen)
         viewModel.appSettingsVisible -> BackHandler(onBack = viewModel::closeAppSettings)
         aboutDialogVisible -> BackHandler { aboutDialogVisible = false }
+        companionComingSoonVisible -> BackHandler { companionComingSoonVisible = false }
         viewModel.rateLimitDialogVisible -> BackHandler(onBack = viewModel::dismissRateLimitDialog)
         viewModel.ttsPreviewState != null -> BackHandler(onBack = viewModel::dismissTtsPreview)
         actionMessage != null -> BackHandler { actionMessage = null }
@@ -7587,7 +7599,9 @@ private fun MoreOptions(
                             keyIdentity = activeIndividualApiKeyLabel ?: activeApiKeyLabel,
                             onConfigChange = onCustomApiChange,
                             onModelChange = onModelChange,
-                            fetchModels = fetchCustomModels
+                            fetchModels = fetchCustomModels,
+                            onEditApiKey = onEditApiKey,
+                            onClearApiKey = onClearApiKey
                         )
                     } else {
                         ModelDropdown(
@@ -8417,6 +8431,37 @@ private fun AppSettingsDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text(text = "Done", color = accentSoftColor)
+            }
+        }
+    )
+}
+
+@Composable
+private fun CompanionComingSoonDialog(
+    onDismiss: () -> Unit,
+    onReturnHome: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = AppSurface,
+        titleContentColor = AppTextPrimary,
+        textContentColor = AppTextSecondary,
+        title = {
+            Text(
+                text = stringResource(R.string.companion_coming_soon_title),
+                style = MaterialTheme.typography.titleMedium
+            )
+        },
+        text = {
+            Text(
+                text = stringResource(R.string.companion_coming_soon_body),
+                color = AppTextSecondary,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onReturnHome) {
+                Text(stringResource(R.string.companion_coming_soon_return), color = AppAccentSoft)
             }
         }
     )

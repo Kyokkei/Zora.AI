@@ -258,4 +258,7 @@
     <string name="about_this_app">Về ứng dụng này</string>
     <string name="about_creator_note">Đôi lời từ người tạo ứng dụng</string>
     <string name="about_dedication">Tôi làm ứng dụng này cho bạn gái mình. Nếu không có cô ấy, ứng dụng này sẽ không bao giờ ra đời.\n\nTram Anh, cảm ơn em vì bảy năm bên nhau.</string>
+    <string name="companion_coming_soon_title">Sắp ra mắt</string>
+    <string name="companion_coming_soon_body">Tính năng Companion vẫn đang được phát triển và sẽ ra mắt trong bản cập nhật tới.</string>
+    <string name="companion_coming_soon_return">Về màn hình chính</string>
 </resources>

@@ -14,14 +14,20 @@ import com.yozora.aichat.ui.chat.TokenEstimator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Dns
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 data class GeminiChatReply(
     val text: String,
@@ -96,6 +102,21 @@ private suspend fun <T> resultCatchingNonCancellation(
         throw error
     } catch (error: Throwable) {
         Result.failure(error)
+    }
+}
+
+/**
+ * Resolves to IPv4 addresses only. Some mobile networks hand out IPv6 addresses
+ * and a default route without actually routing IPv6 anywhere, so a dual-stack
+ * lookup makes plain HTTP clients hang until the connect timeout. OkHttp's Happy
+ * Eyeballs helps only when both families answer; dropping AAAA removes the dead
+ * path entirely.
+ */
+private object Ipv4OnlyDns : Dns {
+    override fun lookup(hostname: String): List<InetAddress> {
+        val all = Dns.SYSTEM.lookup(hostname)
+        val v4 = all.filterIsInstance<Inet4Address>()
+        return v4.ifEmpty { all }
     }
 }
 
@@ -1384,22 +1405,76 @@ class GeminiChatService(
     suspend fun fetchCustomModels(config: CustomApiConfig, apiKey: String): Result<List<String>> =
         resultCatchingNonCancellation {
             withContext(Dispatchers.IO) {
-                val json = requestJson(
-                    config.endpoint("models"),
-                    mapOf("Authorization" to "Bearer $apiKey"),
-                    customApi = config
-                )
-                val data = json.optJSONArray("data") ?: error("The provider did not return a model list. Enter a model ID manually.")
-                buildList {
-                    for (index in 0 until data.length()) {
-                        data.optJSONObject(index)?.optString("id")?.trim()
-                            ?.takeIf { it.isNotEmpty() }?.let(::add)
-                    }
-                }.distinct().sorted().also {
-                    require(it.isNotEmpty()) { "No models returned. Enter a model ID manually." }
+                val url = config.endpoint("models")
+                val authorized = resultCatchingNonCancellation {
+                    customModelNames(requestCustomModels(url, mapOf("Authorization" to "Bearer $apiKey"), config))
                 }
+                authorized.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
+                val authorizedError = authorized.exceptionOrNull()
+                val isRedirect = (authorizedError as? ApiHttpException)?.statusCode?.let { it in 300..399 } == true
+                if (!isRedirect) {
+                    val unauthenticated = resultCatchingNonCancellation {
+                        customModelNames(requestCustomModels(url, emptyMap(), config))
+                    }
+                    unauthenticated.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
+                    authorizedError?.let { throw it }
+                    unauthenticated.exceptionOrNull()?.let { throw it }
+                }
+                authorizedError?.let { throw it }
+                error("No models returned. Enter a model ID manually.")
             }
         }
+
+    private fun requestCustomModels(url: String, headers: Map<String, String>, config: CustomApiConfig): Any {
+        val builder = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .dns(Ipv4OnlyDns)
+        config.networkProxy()?.let(builder::proxy)
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Content-Type", "application/json")
+            .apply { headers.forEach { (key, value) -> header(key, value) } }
+            .build()
+        builder.build().newCall(request).execute().use { response ->
+            val responseText = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val apiMessage = apiErrorMessage(responseText).ifBlank { responseText.take(160) }
+                throw ApiHttpException(
+                    statusCode = response.code,
+                    apiMessage = apiMessage,
+                    responseBody = responseText
+                )
+            }
+            val trimmed = responseText.trim()
+            return if (trimmed.startsWith("[")) JSONArray(trimmed) else JSONObject(trimmed)
+        }
+    }
+
+    private fun customModelNames(payload: Any): List<String> {
+        val array = when (payload) {
+            is JSONArray -> payload
+            is JSONObject -> payload.optJSONArray("data") ?: payload.optJSONArray("models")
+            else -> null
+        } ?: error("The provider did not return a model list. Enter a model ID manually.")
+        return buildList {
+            for (index in 0 until array.length()) {
+                val name = when (val item = array.opt(index)) {
+                    is JSONObject -> listOf("id", "name", "model", "value").firstNotNullOfOrNull { key ->
+                        val value = item.opt(key)
+                        if (value == null || value == JSONObject.NULL) null
+                        else value.toString().trim().takeIf { it.isNotEmpty() }
+                    }
+                    is String -> item.trim().takeIf { it.isNotEmpty() }
+                    else -> null
+                }
+                name?.let(::add)
+            }
+        }.distinct().sorted()
+    }
 
     private fun requestJson(
         url: String,

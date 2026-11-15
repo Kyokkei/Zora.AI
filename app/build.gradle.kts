@@ -13,8 +13,8 @@ android {
         applicationId = "com.yozora.aichat"
         minSdk = 26
         targetSdk = 35
-        versionCode = 246
-        versionName = "2.3.0"
+        versionCode = 247
+        versionName = "2.3.1"
 
         val googleWebClientId = providers.gradleProperty("ZORA_GOOGLE_WEB_CLIENT_ID")
             .orElse(System.getenv("ZORA_GOOGLE_WEB_CLIENT_ID") ?: "CONFIGURE_ME")
@@ -31,13 +31,13 @@ android {
         create("zora") {
             dimension = "brand"
             resValue("string", "app_name", "Zora.AI")
-            resValue("string", "app_version_panel", "Zora.AI v2.3.0")
+            resValue("string", "app_version_panel", "Zora.AI v2.3.1")
         }
         create("slv") {
             dimension = "brand"
             applicationIdSuffix = ".slv"
             resValue("string", "app_name", "SanLoVerse (SLV)")
-            resValue("string", "app_version_panel", "SanLoVerse (SLV) v2.3.0")
+            resValue("string", "app_version_panel", "SanLoVerse (SLV) v2.3.1")
         }
     }
 
