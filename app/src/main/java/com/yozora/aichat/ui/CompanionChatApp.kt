@@ -4807,6 +4807,14 @@ private fun MessageActionSheet(
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(top = 18.dp, bottom = 10.dp)
                 )
+                message.model?.takeIf { it.isNotBlank() }?.let { usedModel ->
+                    Text(
+                        text = modelDisplayName(usedModel),
+                        color = AppTextSecondary,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
                 Text(
                     text = "React",
                     color = AppTextSecondary,

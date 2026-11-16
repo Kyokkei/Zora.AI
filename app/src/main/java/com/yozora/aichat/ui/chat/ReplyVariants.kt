@@ -6,11 +6,13 @@ import org.json.JSONObject
 data class ReplyVariant(
     val content: String,
     val reaction: String? = null,
-    val time: String = ""
+    val time: String = "",
+    /** Concrete model that produced this reply, shown in the message action sheet. */
+    val model: String? = null
 )
 
 internal fun ChatMessage.savedReplyVariants(): List<ReplyVariant> {
-    val current = ReplyVariant(content, reaction, time)
+    val current = ReplyVariant(content, reaction, time, model)
     if (replyVariants.isEmpty()) return listOf(current)
     return replyVariants.toMutableList().apply {
         this[selectedReplyVariant.coerceIn(indices)] = current
@@ -25,17 +27,19 @@ internal fun ChatMessage.withReplyVariant(index: Int): ChatMessage {
         content = variant.content,
         reaction = variant.reaction,
         time = variant.time,
+        model = variant.model,
         replyVariants = variants,
         selectedReplyVariant = index
     )
 }
 
-internal fun ChatMessage.withAdditionalReply(content: String, time: String): ChatMessage {
-    val variants = savedReplyVariants() + ReplyVariant(content = content, time = time)
+internal fun ChatMessage.withAdditionalReply(content: String, time: String, model: String? = null): ChatMessage {
+    val variants = savedReplyVariants() + ReplyVariant(content = content, time = time, model = model)
     return copy(
         content = content,
         reaction = null,
         time = time,
+        model = model,
         replyVariants = variants,
         selectedReplyVariant = variants.lastIndex
     )
@@ -46,7 +50,8 @@ internal fun List<ReplyVariant>.toReplyVariantsJson(): JSONArray = JSONArray().a
         put(JSONObject()
             .put("content", variant.content)
             .put("reaction", variant.reaction ?: JSONObject.NULL)
-            .put("time", variant.time))
+            .put("time", variant.time)
+            .put("model", variant.model ?: JSONObject.NULL))
     }
 }
 
@@ -60,7 +65,8 @@ internal fun replyVariantsFromJson(raw: String): List<ReplyVariant> = runCatchin
             add(ReplyVariant(
                 content = content,
                 reaction = restoreMessageReaction(item.optString("reaction")),
-                time = item.optString("time")
+                time = item.optString("time"),
+                model = item.optString("model").takeIf { it.isNotBlank() }
             ))
         }
     }

@@ -3,6 +3,9 @@ package com.yozora.aichat.data.remote
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -47,10 +50,15 @@ fun modelDisplayName(model: String): String = when (model) {
 }
 
 class DoroAutoExhaustedException(
-    cause: ApiHttpException? = null
+    cause: ApiHttpException? = null,
+    networkCause: IOException? = null
 ) : IOException(
-    "DoroAutoMode exhausted: every fallback model is rate-limited or unavailable.",
-    cause
+    if (networkCause != null && cause == null) {
+        "DoroAutoMode exhausted: every fallback model timed out or dropped the connection."
+    } else {
+        "DoroAutoMode exhausted: every fallback model is rate-limited, unavailable, or unreachable."
+    },
+    cause ?: networkCause
 )
 
 /**
@@ -93,6 +101,7 @@ class DoroAutoRouter(
         }
 
         var lastRetryable: ApiHttpException? = null
+        var lastNetwork: IOException? = null
         for (candidate in candidates) {
             try {
                 return request(candidate)
@@ -107,10 +116,18 @@ class DoroAutoRouter(
                 if (error.statusCode == 429 && isDailyQuotaExceeded(error)) {
                     markDailyQuotaExhausted(cacheKey, candidate, quotaDay)
                 }
+            } catch (error: SocketTimeoutException) {
+                // A model that stops responding is just as unusable as one that
+                // returns 503; fall through to the next tier instead of failing
+                // the whole turn on a single stalled endpoint.
+                lastNetwork = error
+            } catch (error: IOException) {
+                if (!isRetryableNetworkFailure(error)) throw error
+                lastNetwork = error
             }
         }
 
-        throw DoroAutoExhaustedException(lastRetryable)
+        throw DoroAutoExhaustedException(lastRetryable, lastNetwork)
     }
 
     private suspend fun markDailyQuotaExhausted(
@@ -163,6 +180,25 @@ internal fun isRetryableFailure(error: ApiHttpException): Boolean {
         append(error.responseBody)
     }.lowercase(Locale.US)
     return HIGH_DEMAND_MARKERS.any(payload::contains)
+}
+
+/**
+ * Network-level failures worth trying another model for. A DNS miss or a refused
+ * connection is transport-wide, so retrying the tier cannot help; an SSL or
+ * protocol failure is likewise not model-specific. Timeouts and resets are.
+ */
+internal fun isRetryableNetworkFailure(error: IOException): Boolean = when (error) {
+    is SocketTimeoutException -> true
+    is ConnectException -> true
+    is UnknownHostException -> false
+    else -> error.message.orEmpty().let { message ->
+        val normalized = message.lowercase(Locale.US)
+        normalized.contains("timed out") ||
+            normalized.contains("timeout") ||
+            normalized.contains("reset") ||
+            normalized.contains("broken pipe") ||
+            normalized.contains("eof")
+    }
 }
 
 private val HIGH_DEMAND_MARKERS = listOf(

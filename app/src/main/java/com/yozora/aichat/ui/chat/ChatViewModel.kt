@@ -70,6 +70,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
@@ -100,7 +101,9 @@ data class ChatMessage(
     val deliveryStatus: MessageDeliveryStatus = MessageDeliveryStatus.Sent,
     val time: String = currentTime(),
     val replyVariants: List<ReplyVariant> = emptyList(),
-    val selectedReplyVariant: Int = 0
+    val selectedReplyVariant: Int = 0,
+    /** Concrete model that produced this reply, shown only in the action sheet. */
+    val model: String? = null
 ) {
     val imageUri: Uri?
         get() = imageUris.firstOrNull()
@@ -502,7 +505,7 @@ data class PersonaUiState(
     val model: String = DORO_AUTO_MODEL_ID,
     val customApi: CustomApiConfig = CustomApiConfig(),
     val safetyLevel: SafetyLevel = SafetyLevel.None,
-    val thinkingEffort: GeminiThinkingEffort = GeminiThinkingEffort.Low,
+    val thinkingEffort: GeminiThinkingEffort = GeminiThinkingEffort.Minimal,
     val temperature: Float = 1.0f,
     val avatarUri: Uri? = null,
     val avatarScale: Float = 1.0f,
@@ -1352,7 +1355,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         appendModelResponseOrRecover(
                             sessionId = sessionId,
                             session = session,
-                            rawText = reply.text
+                            rawText = reply.text,
+                            resolvedModel = reply.resolvedModel
                         )
                     }
 
@@ -1410,7 +1414,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             appendModelResponseOrRecover(
                 sessionId = sessionId,
                 session = session,
-                rawText = reply.text
+                rawText = reply.text,
+                resolvedModel = reply.resolvedModel
             )
             } finally {
                 releaseSend(sessionId, sendToken)
@@ -1477,7 +1482,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 sessionId = sessionId,
                 session = session,
                 rawText = reply.text,
-                speaker = targetMember.takeIf { members.size > 1 }
+                speaker = targetMember.takeIf { members.size > 1 },
+                resolvedModel = reply.resolvedModel
             )
             } finally {
                 releaseSend(sessionId, sendToken)
@@ -1651,7 +1657,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             sessionId = sessionId,
                             session = session,
                             rawText = reply.text,
-                            speaker = member
+                            speaker = member,
+                            resolvedModel = reply.resolvedModel
                         )
                         successfulResponses++
                 }.onFailure { throwable ->
@@ -2252,7 +2259,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             appendModelResponseOrRecover(
                 sessionId = sessionId,
                 session = session,
-                rawText = reply.text
+                rawText = reply.text,
+                resolvedModel = reply.resolvedModel
             )
             return
         }
@@ -5224,7 +5232,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         sessionId: String,
         session: ChatSession,
         rawText: String,
-        speaker: GroupMember? = null
+        speaker: GroupMember? = null,
+        resolvedModel: String? = null
     ) {
         val declaredSpeaker = speaker?.let {
             leadingGroupSpeaker(rawText, session.normalizedMembers())
@@ -5239,7 +5248,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     role = "model",
                     content = cleanResponse,
                     speakerId = effectiveSpeaker?.id,
-                    speakerName = effectiveSpeaker?.persona?.displayName
+                    speakerName = effectiveSpeaker?.persona?.displayName,
+                    model = resolvedModel
                 ),
                 preview = if (effectiveSpeaker == null) {
                     cleanResponse.take(72)
@@ -5642,7 +5652,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 appendModelResponseOrRecover(
                     sessionId = sessionId,
                     session = session,
-                    rawText = reply.text
+                    rawText = reply.text,
+                    resolvedModel = reply.resolvedModel
                 )
                 true
             }
@@ -5971,6 +5982,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             ?.replace("\\\"", "\"")
 
         return when {
+            throwable is SocketTimeoutException ->
+                "The model did not respond in time. Retry in a moment."
+
             throwable is ApiHttpException && throwable.statusCode == 403 &&
                 throwable.apiMessage.contains("project has been denied access", ignoreCase = true) ->
                 "The API project was denied access by the provider. Contact the provider's support."
