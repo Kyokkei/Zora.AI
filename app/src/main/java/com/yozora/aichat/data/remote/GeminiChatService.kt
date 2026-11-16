@@ -33,7 +33,9 @@ data class GeminiChatReply(
     val text: String,
     val promptTokenCount: Int,
     val responseTokenCount: Int,
-    val totalTokenCount: Int
+    val totalTokenCount: Int,
+    /** Concrete model that produced this reply, when the caller asked for one. */
+    val resolvedModel: String? = null
 )
 
 data class GeminiDirectorReply(
@@ -663,7 +665,8 @@ class GeminiChatService(
             text = extractGeminiRestText(candidate),
             promptTokenCount = usage?.optInt("promptTokenCount") ?: 0,
             responseTokenCount = usage?.optInt("candidatesTokenCount") ?: 0,
-            totalTokenCount = usage?.optInt("totalTokenCount") ?: 0
+            totalTokenCount = usage?.optInt("totalTokenCount") ?: 0,
+            resolvedModel = persona.model
         )
     }
 
@@ -710,7 +713,8 @@ class GeminiChatService(
             text = groundedText,
             promptTokenCount = usage?.optInt("promptTokenCount") ?: 0,
             responseTokenCount = usage?.optInt("candidatesTokenCount") ?: 0,
-            totalTokenCount = usage?.optInt("totalTokenCount") ?: 0
+            totalTokenCount = usage?.optInt("totalTokenCount") ?: 0,
+            resolvedModel = persona.model
         )
     }
 
@@ -929,7 +933,8 @@ class GeminiChatService(
             text = content,
             promptTokenCount = usage?.optInt("prompt_tokens") ?: 0,
             responseTokenCount = usage?.optInt("completion_tokens") ?: 0,
-            totalTokenCount = usage?.optInt("total_tokens") ?: 0
+            totalTokenCount = usage?.optInt("total_tokens") ?: 0,
+            resolvedModel = persona.model
         )
     }
 
@@ -971,7 +976,8 @@ class GeminiChatService(
             text = content,
             promptTokenCount = inputTokens,
             responseTokenCount = outputTokens,
-            totalTokenCount = inputTokens + outputTokens
+            totalTokenCount = inputTokens + outputTokens,
+            resolvedModel = persona.model
         )
     }
 
@@ -1490,7 +1496,10 @@ class GeminiChatService(
                 doOutput = body != null
                 if (customApi != null) instanceFollowRedirects = false
                 connectTimeout = 30_000
-                readTimeout = 120_000
+                // Long roleplay turns legitimately stream well past a minute, so
+                // keep headroom above the usual generation time while still
+                // failing faster than the old 120s ceiling.
+                readTimeout = 85_000
                 setRequestProperty("Content-Type", "application/json")
                 headers.forEach { (key, value) -> setRequestProperty(key, value) }
             }

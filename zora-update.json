@@ -1,8 +1,8 @@
 {
-  "versionName": "2.3.0",
-  "versionCode": 246,
+  "versionName": "2.3.2",
+  "versionCode": 248,
   "apkAssetName": "app-zora-release.apk",
-  "sha256": "897bc124e888e9a6f7bc70622b5b2cf54b17cdfbe466e7b5b0f1661b0214f3b6",
-  "sizeBytes": 27941016,
-  "downloadUrl": "https://github.com/Kyokkei/Zora.AI/releases/download/v2.3.0/app-zora-release.apk"
+  "sha256": "934302ff4220d2d6ac1e90fc2fe7c96f1ec8754bbd820fba30bd57b3b1215cde",
+  "sizeBytes": 28277285,
+  "downloadUrl": "https://github.com/Kyokkei/Zora.AI/releases/download/v2.3.2/app-zora-release.apk"
 }
